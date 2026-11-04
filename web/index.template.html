@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Secret of Monkey Island Demo (WASM)</title>
+<style>
+  :root { color-scheme: dark; --bg:#0b0b12; --fg:#e8e8f0; --accent:#6cf; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:14px/1.4 system-ui,sans-serif; }
+  body { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; padding:0 16px; box-sizing:border-box; }
+  #wrap { width:min(100%, calc((100vh - 90px) * 1.6)); }
+  canvas { width:100%; aspect-ratio:320/200; image-rendering:pixelated; background:#000; display:block; cursor:crosshair; border:1px solid #333; }
+  #status { min-height:1.4em; color:#9ab; }
+  small { color:#789; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="screen" width="320" height="200" tabindex="0"></canvas></div>
+<div id="status">Loading…</div>
+<small>Left click = left button, right click = right button, keys go to the game. ESC skips cutscenes. (Sound is not implemented.)</small>
+<script>
+/*__DATA__*/
+</script>
+<script>
+/*__MI_JS__*/
+</script>
+<script>
+(async function () {
+  const status = document.getElementById('status');
+  const canvas = document.getElementById('screen');
+  const ctx = canvas.getContext('2d');
+  const img = ctx.createImageData(320, 200);
+  const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+  try {
+    const mod = await MI();
+    const put = (bytes) => { const p = mod._mi_alloc(bytes.length); mod.HEAPU8.set(bytes, p); return p; };
+    const lec = b64(MI_DATA.lec), idx = b64(MI_DATA.idx);
+    const r = mod._mi_init(put(lec), lec.length, put(idx), idx.length);
+    if (r) throw new Error('resource init failed (' + r + ')');
+    for (const [id, s] of Object.entries(MI_DATA.charsets)) { const d = b64(s); mod._mi_charset(+id, put(d), d.length); }
+    mod._mi_start();
+    status.textContent = '';
+    const toGame = (e) => {
+      const r = canvas.getBoundingClientRect();
+      return [Math.max(0, Math.min(319, Math.floor((e.clientX - r.left) * 320 / r.width))),
+              Math.max(0, Math.min(199, Math.floor((e.clientY - r.top) * 200 / r.height)))];
+    };
+    canvas.addEventListener('mousemove', e => { const [x, y] = toGame(e); mod._mi_mouse_move(x, y); });
+    canvas.addEventListener('mousedown', e => { const [x, y] = toGame(e); mod._mi_mouse_click(x, y, e.button === 2 ? 2 : 1); canvas.focus(); e.preventDefault(); });
+    canvas.addEventListener('contextmenu', e => e.preventDefault());
+    const keymap = { Escape: 27, Enter: 13, Backspace: 8, Tab: 9, ' ': 32, F1: 315, F2: 316, F3: 317, F4: 318, F5: 319, F6: 320, F7: 321, F8: 322, F9: 323, F10: 324 };
+    window.addEventListener('keydown', e => {
+      let k = keymap[e.key]; if (k === undefined && e.key.length === 1) k = e.key.charCodeAt(0);
+      if (k !== undefined) { mod._mi_key(k); e.preventDefault(); }
+    });
+    window.__mi = mod; window.__frames = 0;
+    let last = performance.now(), acc = 0; const SPEED = +(new URLSearchParams(location.search).get('speed') || 1);
+    function tick(now) {
+      acc += (now - last) * SPEED; last = now;
+      const interval = mod._mi_ticks_per_frame() * 1000 / 60;
+      let n = 0;
+      while (acc >= interval && n < 60) {
+        if (mod._mi_frame()) { status.textContent = 'The game has ended.'; return; }
+        acc -= interval; n++; window.__frames++;
+      }
+      if (acc > interval * 60) acc = 0;
+      if (location.hash === '#debug') status.textContent = 'frames=' + window.__frames + ' room=' + mod._mi_room();
+      canvas.style.cursor = mod._mi_cursor_visible() ? 'crosshair' : 'none';
+      if (n) { img.data.set(mod.HEAPU8.subarray(mod._mi_framebuffer(), mod._mi_framebuffer() + 320 * 200 * 4)); ctx.putImageData(img, 0, 0); }
+      requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  } catch (err) { status.textContent = 'Error: ' + err.message; console.error(err); }
+})();
+</script>
+</body>
+</html>

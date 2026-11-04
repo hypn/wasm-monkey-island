@@ -1,0 +1,99 @@
+# Monkey Island demo (MIDEMO) — reverse-engineering notes
+
+Target: `mi_demo2/` — "The Secret of Monkey Island" contest demo (1991), DOS, EGA/VGA.
+Tools: own Python scripts (`work/*.py`), REA (Ghidra 12.1.4 provider) on the unpacked EXE,
+Ghidra headless (`work/gh/scripts/MkFuncs.java`) to create/decompile functions that Ghidra's
+auto-analysis missed (they are only reachable through a far-pointer table).
+
+## Data files
+| file | encoding | content |
+|---|---|---|
+| `DISK01.LEC` | every byte XOR 0x69 | `LE` container → `FO` (room offset table) + `LF` room files |
+| `000.LFL` | block headers plain, payload XOR 0xFF | index: `RN` room names, `0R` room dir, `0S` scripts dir, `0N` sounds dir, `0C` costumes dir, `0O` object dir |
+| `901/902/904.LFL` | see charsets (TODO) | charset / font data |
+
+Block header: `u32 LE size (incl. header)`, 2-char tag. `LE`→`FO`(41 bytes: count, then n×{room u8, offset u32}) then `LF` blocks
+(`LF` = `u16 room id` + blocks). A room `RO` block holds
+`HD`(w,h,numObjects u16 each) `BX`(boxes) `SA`(32 byte table) `BM`(bitmap) `OI`×n (object image) `NL SL`(counts) `OC`×n (object code)
+`EX`(exit script) `EN`(entry script) `LC`(local script count) `LS`×n (local scripts); after `RO`: global `SC` scripts, `CO` costumes.
+
+### Room bitmap (BM) — verified by rendering room 2 (`work/r2.png`)
+`BM` data: `u16 total`, then `w/8` × `u16` strip offsets (relative to start of BM payload), each strip 8px wide column-major,
+EGA RLE (high bit: run / copy-left; 0x40: two-colour alternating nibble run; else nibble count|colour). Standard 16-colour EGA palette.
+
+## EXE
+* `MIDEMO.EXE` is LZEXE 0.91 packed (`LZ91` at MZ+0x1C). `work/unlz.py` unpacks → `MIDEMO_UNP.EXE` (112075 bytes image).
+  Original entry 0fe8:2ece, ss:sp 21e5:0800. MS C 5.x/6 run-time ("MS Run-Time Library - Copyright (c) 1990").
+* DGROUP base = image offset 0x1a130 (startup does `mov di,0x1a13; mov ss,di`). Ghidra linear address = 0x10000 + image offset.
+* Script engine: main loop `FUN_1000_5cde` (0x15cde): `while (curSlot != 0xFF){ op = fetchByte(5c8c); opcode=op; call far [DS:0x48c + op*4] }`.
+  Evidence ev_de731d4ba47ac21e6554d203ab963c4e90fc664e938c2d0e1351d775d4940ffc.
+* **Opcode table**: 256 far pointers at image 0x1a5bc (DS:0x048c), 103 distinct handlers in CODE_0 offsets 0x68f6..0x965c.
+  Layout is the SCUMM v4/v5 family (0x18 = jumpRelative: `pc += fetchWord()`, 0x00 = stopObjectCode, 0x80 bit = param-is-variable...).
+  Handlers decompiled to `work/gh/handlers.c`.
+* Script pc is `DS:6f42/6f44` (off/seg), current slot `DS:66a6`, last opcode `DS:72a5`.
+
+## Engine facts verified from the decompile (see `work/gh/handlers.c`, `work/decomp/functions/*.c`)
+* Variable operands: bit 0x8000 = bit variable, 0x4000 = script-local (17 words/slot, 20 slots), 0x2000 = indexed (`FUN_1000_64d4`). Parameter
+  "var-or-direct" masks 0x80/0x40/0x20 apply to the **last opcode byte** (`DS:72a5`).
+* Boot: `FUN_1000_0000` starts global script 1 with args at DS:0x196e (0 when no command-line argument) then loops:
+  wait `VAR_TIMER_NEXT` ticks (60 Hz), `FUN_682a` decrements paused-script delays, run all slots (`FUN_5c50`), sentence dispatcher (`a3a0`,
+  LIFO stack), actors (`af10`/`b600` walk + `d18c` draw), camera (`151e`, 8 px/frame), message timer (`9b64`: 60 + `VAR_CHARINC`*chars ticks).
+* Object owner/state: one byte per object (`DS:0x3cc6`), state = high nibble, owner = low nibble; class bits = 3 bytes (`DS:0x1be8`).
+* Object `OC` header (offsets from block start): +6 id, +9 x/8, +10 y/8 (&0x7f), +11 w/8, +12 parent, +13/+15 walk x/y (s16), +17 height|dir,
+  +18 name offset, +19 verb table `{verb u8, off u16}*,0`. `OI` = id + image (`u16 size`, per-strip `u16` offsets; same strip codec as `BM`).
+* Room load tags (DS:0x38f..): `HD BX BM EX EN SA`. Entry/exit run `VAR_ENTRY_SCRIPT`, room `EN` (slot number 998), `VAR_ENTRY_SCRIPT2`; exit = 30/`EX`(999)/31.
+* Costumes: all offsets relative to block start; header `[6]=numAnim [7]=format(0x58=16 colours) [8..]=palette`, then `u16 animCmds`,
+  16×`u16` limb picture tables, `numAnim+1`×`u16` anim definitions. Picture header 12 bytes `w,h,relx,rely,movex,movey` then column RLE (`colour<<4|run`).
+* Charset (`901/902/904.LFL`): `u32 size, u16 0x0363, 15-byte colour map, bpp, height, u16 n, u32 offsets[n]` (relative to the bpp byte);
+  glyph = `w h xoff yoff` + **continuous** bit stream (rows are not byte aligned).
+* Text escapes: `0xFF 1|8` newline, `0xFF 2` keep, `0xFF 3` wait, `0xFF 4..7 <u16>` var/verb/object/string substitution; `@` is dropped.
+* Main view starts at y=16, 144 rows (`roomOps 3` = top,height); EGA palette matches the oracle exactly.
+
+## Costume rendering details (verified by decompile + visual checks)
+* Animation commands (bytes in the `animCmds` stream, low 7 bits): `0x79` = stop limb, `0x7A` = restart limb, `0x7B` = hide, `0x78`/`0x7C` = counter
+  commands (skipped when stepping, `FUN_1000_d272`). **A stopped limb is not drawn** — walk anims stop the head limb (limb 1) because the head is baked into
+  limb 0; ignoring this paints the stand-frame head over the walking sprite (the "double head" bug).
+* Actor colours: costume palette maps picture index -> EGA colour; `actorOps 13/17` override entries (`FUN_1000_b414`); lights bit 3 off = dark grey actors.
+* Mirroring is `FUN_1000_d1d6`; west/east share the same pictures (anim `n*4+dir`).
+
+## Foreground masks (z-order of actors vs objects)
+Each `OI` block carries, after the image data (`img + u16 size`), a mask: `u16 total`, `u16 per-strip offset` (relative to the mask start) then per strip a
+`decompressMaskImg`-style RLE: byte `b` with bit7 = run of `b&0x7f` rows of the next byte, else `b` literal rows. One byte = 8 pixels (MSB = left) of one row.
+Set bits are foreground that hides actors standing in a walkbox whose `mask` byte is non-zero (every box in the bar has mask 1). All-zero masks (`b0 00`) mean "no overlap".
+This is why Guybrush must walk behind the bar tables and pirates (which are objects, not actors).
+
+## Verification oracle (dynamic analysis of the original)
+`work/oracle/run.sh <n>` copies `mi_demo2`, starts `dosbox-x` under `xvfb-run` (`machine=vgaonly`, `midemo e k`), and takes `import -window root` screenshots
+(~2.3 s apart). The emulated 320x200 screen sits at (192,201) in the 1024x768 capture at 2x. `work/oracle/*` helper snippets (python/numpy) downsample a shot and
+compare against my engine frames:
+* palette check: for the headshot scene my 16-colour render is identical to the original (only text timing differed, 99.2% pixel match);
+* observed: the original under DOSBox-X dies with `R6003 integer divide by 0` at the end of the intro when `cycles=max`; with `cycles=fixed 12000` it stayed black,
+  so it could not be used to check the dock scene (open item).
+Native engine tests: `engine/mi_native <dir> <frames> <prefix> <every>` with env `CLICKS=frame:x:y:btn,...`, `GOTO=<room>` (+`EX`,`EY`), `TRACE=1`, `TRACE_FROM=n`,
+`TRACE_ROOM=1`, `TRACE_OBJ=id`, `TRACE_VAR=n`, `TRACE_TXT=1`, `DUMP=1`; `work/sheet.py`/`ppm2png.py` build contact sheets. Browser test: `web/test/cdp.js` (CDP over
+headless Chrome: real clicks/keys, screenshots, `?speed=N` to run N times faster).
+
+## Fixes after first play-test
+* `putActorInRoom(a,0)` also resets x,y to 0 (`FUN_1000_b118(a,0,0,0)`); the ego-restore in `eng_start_room` must restore room **and position** (ego starts at 360,100 off-screen right
+  and walks in; with x=0 the dock troll script 203 (reacts to ego x) fired and Guybrush "walked in" from the top left).
+* `saveRestoreVerbs` (op 0xAB): saved verbs must not be drawn/hit-tested (the title cutscene hides the verb panel this way).
+
+* `putActor` snaps the actor into the nearest walkbox (ScummVM `adjustXYToBeInBox`); ego put at (360,100) therefore starts at (360,132) and walks flat. Walk destinations are snapped
+  the same way, so clicking the ceiling in the bar stops at the box edge. (Careful: WASM `long` is 32-bit — use `long long` for squared distances.)
+* Camera follow (`FUN_1000_7e3c`/`151e`): follow only re-centres when the actor is outside strips 10..30 of the view; `actorFollowCamera` no longer jumps the camera.
+
+* **Mirroring**: verified visually that `mirror = (facing == 0) ^ (format & 0x80)` is correct (a decompile-based inversion made Guybrush moonwalk — `FUN_1000_d1d6`'s flag means "not mirrored"). Multi-limb x offsets accumulate `+movex` in both modes.
+* **Actor classes** (3 bytes at `DS:0x1be8`, class n = bit n-1): 20 = NeverClip (ignore foreground masks), 21 = AlwaysClip, 22 = IgnoreBoxes (no walkbox snapping; the dock troll is
+  placed at x=100 outside any box — snapping it moved it to x=147, "too far right").
+* Walking to an object (`op 0x36`) takes the object's `actordir` (OC byte +17 low 3 bits) as the arrival facing; plain `walkActorTo` keeps the travel direction.
+* Head/limb direction: when an animation does not cover a limb (e.g. stand anims only `0x7A`-restart the head), every other active limb is re-decoded with its own frame base and the
+  new direction (ScummVM `Actor::setDirection`), otherwise the head keeps looking at the screen.
+
+* **Room exits are `actorFollowCamera`**: a door script does `putActorInRoom(ego, room)`, `putActor(ego, x, y)`, `actorFollowCamera(ego)`; `FUN_1000_7e3c` then switches to the
+  followed actor's room. Without that the actor just vanished (room != current) and the scene never changed. Doors are state objects: `Open` first, then `Walk to`.
+* `loadRoomWithEgo` faces ego `objdir ^ 1` (handler 726e: `animate 0xF8 + (dir^1)`); `findObject` returns the **first** matching object in room order.
+
+## Open questions
+* Exit script of room 3 kills actors 1..9 (incl. ego); the original evidently keeps ego -> `eng_start_room` restores actors already assigned to the destination room.
+* Walking uses a straight line; the original is the box-matrix walker (`b600`, `cbb6`, `bd1c`, `b842`, `b9b2`) with scaling (`d430`, `SA` block).
+* Sound (`0N` resources, AdLib/PC speaker) not implemented. Object-class/untouchable and `FUN_1000_4196` exact hit-testing approximated.
