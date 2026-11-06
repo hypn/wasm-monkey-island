@@ -26,7 +26,7 @@ static Sentence sentences[6]; static int nsent = -1;
 
 /* cutscene / override state */
 int g_cutscene_slot = 0xff; static int cutscene_depth; static s16 cutscene_stack[6]; static u32 override_pc; static int override_slot = 0xff;
-static const u8 *override_base;
+static const u8 *override_base; static int override_number;
 
 static void vm_error(const char *msg, int a)
 {
@@ -467,7 +467,7 @@ static void op_end_cutscene(void)                                 /* 7d0c: 0xc0 
 static void op_begin_override(void)                               /* 7d5c: 0x58 */
 {
 	if (fetch8() != 0) {
-		override_pc = pc; override_slot = g_cur_slot; override_base = code_base;
+		override_pc = pc; override_slot = g_cur_slot; override_base = code_base; override_number = g_slots[g_cur_slot].number;
 		/* skip the jump instruction that follows */
 		pc += 3;
 	} else {
@@ -871,10 +871,19 @@ void vm_boot(void)
 }
 
 /* helpers used by other modules to resume override etc. */
-int vm_override_active(void) { return override_slot != 0xff; }
+/* The override belongs to the script that set it. If that script has ended (or was stopped) its slot may already run
+ * something else: jumping that slot to the old pc sent script 149 off to a garbage room (black screen). Forget it then. */
+static int override_valid(void)
+{
+	if (override_slot == 0xff) return 0;
+	Slot *s = &g_slots[override_slot];
+	if (s->status == SS_DEAD || s->base != override_base || s->number != override_number) { override_slot = 0xff; return 0; }
+	return 1;
+}
+int vm_override_active(void) { return override_valid(); }
 void vm_do_override(void)
 {
-	if (override_slot == 0xff) return;
+	if (!override_valid()) return;
 	Slot *s = &g_slots[override_slot];
 	s->pc = override_pc; s->status = SS_RUNNING; s->delay = 0;
 	/* the opcode right before pc is the jump that skips the cutscene; run from there */
