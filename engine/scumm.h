@@ -17,7 +17,8 @@ typedef uint32_t u32; typedef int32_t s32;
 #define NUM_VARS 800
 #define NUM_BITVARS 4096
 #define NUM_SLOTS 20
-#define NUM_GLOBAL_SCRIPTS 200
+#define NUM_GLOBAL_SCRIPTS 256
+#define MAX_DISKS 4
 #define NUM_OBJECTS 1000
 #define NUM_INVENTORY 80
 #define NUM_ACTORS 13
@@ -49,7 +50,8 @@ enum {
 
 /* ---- resources ---- */
 typedef struct { u8 room; u32 off; } DirEnt;
-extern u8 *g_disk; extern u32 g_disk_size;
+extern u8 *g_disks[MAX_DISKS]; extern u32 g_disk_sizes[MAX_DISKS]; extern u8 g_lf_disk[256]; extern int g_num_disks;
+int res_add_disk(int n, const u8 *lec, u32 size); int res_set_index(const u8 *idx, u32 size);
 extern DirEnt g_dir_room[256], g_dir_script[NUM_GLOBAL_SCRIPTS], g_dir_sound[NUM_GLOBAL_SCRIPTS], g_dir_cost[NUM_GLOBAL_SCRIPTS];
 extern int g_n_script, g_n_sound, g_n_cost;
 extern u8 g_obj_owner[NUM_OBJECTS];      /* low nibble owner, high nibble state */
@@ -72,6 +74,7 @@ extern u8 g_screen[SCREEN_W * SCREEN_H];     /* palette indices 0..15 */
 extern u8 *g_bg;                             /* composed room background (room + objects) */
 extern const u8 g_ega_palette[16][3];
 void gfx_decode_strip(u8 *dst, int pitch, const u8 *src, int h);
+extern int g_vga; extern u8 g_pal_rgb[256][3];     /* retail VGA rooms: 256-colour palette from the room's PA block */
 void gfx_draw_strips(u8 *dst, int pitch, int dst_h, const u8 *img, int xstrip, int nstrips, int y, int h);
 
 #endif

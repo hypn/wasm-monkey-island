@@ -101,3 +101,5 @@ The game's `MIDEMO.EXE` is the truth we follow. ScummVM's `engines/scumm` is use
 ## H. Audit log
 * Operand-width audit: `work/audit_ops.py` (B12).
 * Behaviour audit (this session): read each handler/helper in the decompile against `engine/*.c`; findings B13-B20 above. Still **not** audited line-by-line: text placement/wrapping (`9a94/9b64/98fa`), palette ops (`roomOps 4`, `ed40`), actor palette (`b414`), flashlight, `0xFF` text codes inside verb names, save/restore.
+
+- **UI1 No way to cancel a verb chosen by hotkey/click.** Added: Esc (while input is enabled) and right-click both re-select the "Walk to" verb (a synthetic click on that verb slot, found by name), so any pending verb is dropped; right-click no longer reaches the room click script. Check: press `T` (sentence "Talk to"), then Esc or right-click -> "Walk to". Verified via the script's current-verb variable (demo var 110, retail var 107) returning to its default.

@@ -1,1 +1,7 @@
 scummvm/
+work/
+web/dist/retail
+web/retail/
+engine/mi_native
+engine/mi_asan
+web/build/

@@ -2,6 +2,7 @@
  * dispatch table at DS:0x048c of MIDEMO.EXE (see RE_NOTES.md for the opcode->handler map).
  * Handler address of the original is given in the comment next to each implementation. */
 #include "engine.h"
+#include "state.h"
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -304,7 +305,8 @@ static void op_pickup_object(void)                                /* 713c: 0x50 
 }
 static void op_load_room(void)                                    /* 7240: 0x72 */
 {
-	int room = var_or_byte(0x80);
+	u32 p0 = pc; int room = var_or_byte(0x80);
+	if (getenv("TRACE_ROOM")) fprintf(stderr, "loadRoom %d (opcode %02x, operand byte %02x, script %d)\n", room, opcode, g_slots[g_cur_slot].base[p0], g_slots[g_cur_slot].number);
 	if (room != g_room) eng_start_room(room);
 }
 static void op_load_room_with_ego(void)                           /* 726e: 0x24 */
@@ -921,4 +923,18 @@ void vm_print_ops(void)
 	}
 done:
 	ps_saved[slot] = w;
+}
+
+/* ---- save/load (state.c) ---- */
+void vm_state(StateIO *io)
+{
+	SIO(io, g_vars); SIO(io, g_bitvars);
+	for (int i = 0; i < NUM_SLOTS; i++) {
+		Slot tmp = g_slots[i]; const u8 *base = g_slots[i].base; tmp.base = NULL;
+		SIO(io, tmp); sio_ptr(io, &base); tmp.base = base;
+		if (!io->saving) g_slots[i] = tmp;
+	}
+	SIO(io, g_cutscene_slot); SIO(io, cutscene_depth); SIO(io, cutscene_stack); SIO(io, override_pc); SIO(io, override_slot);
+	SIO(io, sentences); SIO(io, nsent);
+	if (!io->saving) { g_cur_slot = 0xff; code_base = NULL; override_base = NULL; }
 }

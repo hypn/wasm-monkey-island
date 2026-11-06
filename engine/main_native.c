@@ -10,15 +10,19 @@ static u8 *rdf(const char *p, u32 *n) { FILE *f = fopen(p, "rb"); if (!f) { fpri
 static void dump_ppm(const char *path) { FILE *f = fopen(path, "wb"); fprintf(f, "P6\n320 200\n255\n"); for (int i = 0; i < 320 * 200; i++) { u32 c = g_rgb[i]; fputc((c >> 16) & 255, f); fputc((c >> 8) & 255, f); fputc(c & 255, f); } fclose(f); }
 int main(int argc, char **argv)
 {
-	const char *D = argc > 1 ? argv[1] : "/home/user/monkeyislanddemo/mi_demo2/";
+	const char *D = argc > 1 ? argv[1] : "/home/user/monkeyislanddemo/mi_demo/";
 	int frames = argc > 2 ? atoi(argv[2]) : 100; const char *out = argc > 3 ? argv[3] : "/tmp/frame";
 	int every = argc > 4 ? atoi(argv[4]) : 0;
 	char p[512]; u32 a, b, c;
-	snprintf(p, sizeof p, "%sDISK01.LEC", D); u8 *lec = rdf(p, &a);
 	snprintf(p, sizeof p, "%s000.LFL", D); u8 *idx = rdf(p, &b);
-	if (res_init(lec, a, idx, b)) { fprintf(stderr, "res_init failed\n"); return 1; }
-	const char *cs[] = { "901.LFL", "902.LFL", "904.LFL" }; int ids[] = { 1, 2, 4 };
-	for (int i = 0; i < 3; i++) { snprintf(p, sizeof p, "%s%s", D, cs[i]); u8 *d = rdf(p, &c); res_add_charset(ids[i], d, c); }
+	int nd = 0;
+	for (int dn = 1; dn <= MAX_DISKS; dn++) {          /* DISK01.LEC .. DISK04.LEC, whatever exists */
+		snprintf(p, sizeof p, "%sDISK%02d.LEC", D, dn); FILE *t = fopen(p, "rb"); if (!t) continue; fclose(t);
+		u8 *lec = rdf(p, &a); int r = res_add_disk(dn - 1, lec, a); if (r) { fprintf(stderr, "disk %d failed (%d)\n", dn, r); return 1; } nd++;
+	}
+	if (!nd || res_set_index(idx, b)) { fprintf(stderr, "resource init failed\n"); return 1; }
+	const char *cs[] = { "901.LFL", "902.LFL", "903.LFL", "904.LFL" }; int ids[] = { 1, 2, 3, 4 };
+	for (int i = 0; i < 4; i++) { snprintf(p, sizeof p, "%s%s", D, cs[i]); FILE *t = fopen(p, "rb"); if (!t) continue; fclose(t); u8 *d = rdf(p, &c); res_add_charset(ids[i], d, c); }
 	extern void eng_init(void); eng_init();
 	if (getenv("TRACE")) g_trace = 1;
 	FILE *wav = getenv("SND_WAV") ? fopen(getenv("SND_WAV"), "wb") : NULL; u32 wav_n = 0;   /* mono 16-bit at 49716 Hz; header patched at the end */
@@ -29,10 +33,18 @@ int main(int argc, char **argv)
 		}
 		if (getenv("ENTER") && f == 1300) { extern void eng_load_room_with_ego(int,int,int,int); eng_load_room_with_ego(353, 52, -1, -1); }
 		if (getenv("SENT")) { char *c = strdup(getenv("SENT")); for (char *t = strtok(c, ","); t; t = strtok(NULL, ",")) { int ff, v, o; if (sscanf(t, "%d:%d:%d", &ff, &v, &o) == 3 && ff == f) { s16 av[16] = { (s16)v, (s16)o, 0 }; vm_start_script(g_vars[VAR_SENTENCE_SCRIPT], 0, 0, av); } } free(c); }
+		if (getenv("KEYS")) { char *c = strdup(getenv("KEYS")); for (char *t = strtok(c, ","); t; t = strtok(NULL, ",")) { int ff, k; if (sscanf(t, "%d:%d", &ff, &k) == 2 && ff == f) eng_key(k); } free(c); }
+		if (getenv("STOPSCR") && f == 20) { char *c = strdup(getenv("STOPSCR")); for (char *t = strtok(c, ","); t; t = strtok(NULL, ",")) vm_stop_script(atoi(t)); free(c); }
+		if (getenv("START_ROOM") && f == 25) { vm_stop_script(149); vm_stop_script(1); eng_start_room(atoi(getenv("START_ROOM"))); }
+		if (getenv("SNDSTART")) { char *c = strdup(getenv("SNDSTART")); for (char *t = strtok(c, ","); t; t = strtok(NULL, ",")) { int ff, id; if (sscanf(t, "%d:%d", &ff, &id) == 2 && ff == f) eng_sound_start(id); } free(c); }
 		if (getenv("SEQ")) { char *c = strdup(getenv("SEQ")); for (char *t = strtok(c, ","); t; t = strtok(NULL, ",")) { int ff, o, r; if (sscanf(t, "%d:%d:%d", &ff, &o, &r) == 3 && ff == f) { extern void eng_load_room_with_ego(int,int,int,int); eng_load_room_with_ego(o, r, -1, -1); } } free(c); }
 		if (getenv("GOTO") && f == 1300) { extern void eng_load_room_with_ego(int,int,int,int); int r = atoi(getenv("GOTO")); g_actors[1].room = r; eng_start_room(r); act_put(1, getenv("EX")?atoi(getenv("EX")):160, getenv("EY")?atoi(getenv("EY")):110, r); eng_follow_actor(1); }
 		if (getenv("WALKOBJ") && f == 800) { extern void act_walk_to_obj(int,int); act_walk_to_obj(1, atoi(getenv("WALKOBJ"))); }
 		if (getenv("TRACE_FROM") && f == atoi(getenv("TRACE_FROM"))) g_trace = 1;
+		static s16 pv[NUM_VARS]; if (getenv("DIFFVARS") && (f == atoi(getenv("DIFFVARS")) - 1 || f == atoi(getenv("DIFFVARS")) + 60)) { if (f < atoi(getenv("DIFFVARS"))) memcpy(pv, g_vars, sizeof pv); else for (int i = 0; i < NUM_VARS; i++) if (pv[i] != g_vars[i]) fprintf(stderr, "var %d: %d -> %d\n", i, pv[i], g_vars[i]); }
+		{ static u8 *sv; static u32 svn; extern int state_save(u8 **, u32 *); extern int state_load(const u8 *, u32);
+		  if (getenv("SAVE_AT") && f == atoi(getenv("SAVE_AT"))) { int r = state_save(&sv, &svn); fprintf(stderr, "state_save -> %d, %u bytes (room %d)\n", r, svn, g_room); }
+		  if (getenv("LOAD_AT") && f == atoi(getenv("LOAD_AT")) && sv) { int r = state_load(sv, svn); fprintf(stderr, "state_load -> %d (room %d)\n", r, g_room); } }
 		eng_frame();
 		{ extern int snd_read_raw(s16 *, int); s16 sb[4096]; int n; while ((n = snd_read_raw(sb, 4096)) > 0) { if (wav) { fwrite(sb, 2, n, wav); wav_n += n; } } }
 		if (g_halted) { fprintf(stderr, "halted at frame %d\n", f); break; }
@@ -52,7 +64,22 @@ int main(int argc, char **argv)
 		if (getenv("LIMBS")) { fprintf(stderr, "ego walkbox=%d scale=%d bbox=%d,%d-%d,%d\n", g_actors[1].walkbox, g_actors[1].scalex, g_actors[1].hx1, g_actors[1].hy1, g_actors[1].hx2, g_actors[1].hy2); Actor *e = &g_actors[1]; fprintf(stderr, "ego limbs: facing=%d cur_frame=%d stopped=%04x", e->facing, e->cur_frame, e->stopped); for (int i = 0; i < 3; i++) fprintf(stderr, " [%d: frame=%04x curpos=%04x]", i, e->frame[i], e->curpos[i]); fprintf(stderr, "\n"); }
 		if (getenv("OBJS")) for (int i = 0; i < g_nobjs; i++) fprintf(stderr, "obj %d at %d,%d %dx%d walk %d,%d name=%s\n", g_objs[i].id, g_objs[i].x, g_objs[i].y, g_objs[i].w, g_objs[i].h, g_objs[i].walk_x, g_objs[i].walk_y, eng_obj_name(g_objs[i].id) ? (const char *)eng_obj_name(g_objs[i].id) : "");
 		if (getenv("BOXES")) for (int i = 0; i < g_nboxes; i++) { Box *b = &g_boxes[i]; fprintf(stderr, "box %d: (%d,%d) (%d,%d) (%d,%d) (%d,%d) mask=%d flags=%#x scale=%#x\n", i, b->ulx, b->uly, b->urx, b->ury, b->lrx, b->lry, b->llx, b->lly, b->mask, b->flags, b->scale); }
+		fprintf(stderr, "keys: mainmenu(50)=%d restart(42)=%d pause(43)=%d cutsceneexit(24)=%d talkstop(57)=%d\n", g_vars[50], g_vars[42], g_vars[43], g_vars[24], g_vars[57]);
 		fprintf(stderr, "ego=%d cam=%d,%d follow=%d\n", g_vars[VAR_EGO], g_cam_cur, g_cam_dest, g_cam_follow);
 	}
 	return 0;
 }
+
+/* ---- platform storage for the native test harness: ./saves/slotN.{meta,sav} ---- */
+#include "menu.h"
+#include <time.h>
+#include <sys/stat.h>
+static void spath(char *p, int n, int slot, const char *ext) { snprintf(p, n, "saves/slot%d.%s", slot, ext); }
+int plat_save_put(int slot, const char *meta, const u8 *data, u32 len)
+{ char p[64]; mkdir("saves", 0777); spath(p, sizeof p, slot, "meta"); FILE *f = fopen(p, "wb"); if (!f) return -1; fputs(meta, f); fclose(f);
+  spath(p, sizeof p, slot, "sav"); f = fopen(p, "wb"); if (!f) return -1; fwrite(data, 1, len, f); fclose(f); return 0; }
+int plat_save_meta(int slot, char *out, int max)
+{ char p[64]; spath(p, sizeof p, slot, "meta"); FILE *f = fopen(p, "rb"); if (!f) return -1; int n = (int)fread(out, 1, max - 1, f); fclose(f); out[n] = 0; return n; }
+int plat_save_get(int slot, u8 *out, u32 max)
+{ char p[64]; spath(p, sizeof p, slot, "sav"); FILE *f = fopen(p, "rb"); if (!f) return -1; int n = (int)fread(out, 1, max, f); fclose(f); return n; }
+void plat_timestamp(char *out, int max) { time_t t = time(NULL); strftime(out, max, "%Y-%m-%d %H:%M", localtime(&t)); }

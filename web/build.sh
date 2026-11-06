@@ -4,11 +4,11 @@
 set -e
 cd "$(dirname "$0")"
 ENG=../engine
-DEMO=../mi_demo2
+DEMO=../mi_demo
 mkdir -p dist build
 emcc -O2 -DJS_CURSOR -sSINGLE_FILE=1 -sMODULARIZE=1 -sEXPORT_NAME=MI -sALLOW_MEMORY_GROWTH=1 \
   -sENVIRONMENT=web -sEXPORTED_RUNTIME_METHODS=HEAPU8,HEAPF32 -sNO_EXIT_RUNTIME=1 \
-  $ENG/main_wasm.c $ENG/vm.c $ENG/engine.c $ENG/actor.c $ENG/walk.c $ENG/costume.c $ENG/gfx.c $ENG/res.c $ENG/ui.c $ENG/sound.c $ENG/opl.c \
+  $ENG/main_wasm.c $ENG/vm.c $ENG/engine.c $ENG/actor.c $ENG/walk.c $ENG/costume.c $ENG/gfx.c $ENG/res.c $ENG/ui.c $ENG/sound.c $ENG/opl.c $ENG/state.c $ENG/menu.c \
   -o build/mi.js
 python3 - <<PY
 import base64,json
@@ -21,3 +21,5 @@ t=t.replace('/*__MI_JS__*/',open('build/mi.js').read())
 open('dist/index.html','w').write(t)
 print('wrote dist/index.html',len(t),'bytes')
 PY
+# retail game files (not embedded, not redistributed): reachable as dist/retail/ for ?retail=true when served over http
+ln -sfn ../retail dist/retail

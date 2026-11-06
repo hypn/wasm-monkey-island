@@ -111,4 +111,33 @@ headless Chrome: real clicks/keys, screenshots, `?speed=N` to run N times faster
 * Queue: `78f0` -> `58cc` pushes id, refcount `0x6218[id]++`; `isSoundRunning` (`77aa`) = refcount & 0x7f. Driver entry `223d` (AdLib).
 * Timer ISR `1fe8:2470` hooked on INT 8: PIT reload 0x09d9 (2521) = 473.3 Hz; game timer +1 every 2nd call; BIOS chain every 26th. Music: 8-bit tempo accumulator (`+9`), on overflow one "step"; step runs the event stream. Format documented at the top of `engine/sound.c`. Percussion/rhythm instruments (`inst[13]`) and the effects sequencer (`28fc`) are decoded but not implemented/tested.
 * AdLib init (`2100..`): reg 1=0, BD=0, 8=0, then 1=0x20 (waveform select). Note -> fnum: `n = note-0x1f; fnum = tab[n%12]; B0 = (n/12)<<2 | fnum>>8 | 0x20`, table DS:0x3d2. No velocity/volume handling.
-* Our implementation: `engine/sound.c` (driver, ring buffer, game-clock-driven) + `engine/opl.c` (own OPL2 emulator, float, approximate envelope times, rhythm drums missing). Test: `SND_WAV=/tmp/t.wav ./mi_native ../mi_demo2/ 2200 /tmp/x 0` writes mono 16-bit at 49716 Hz; `TRACE_SND=1`.
+* Our implementation: `engine/sound.c` (driver, ring buffer, game-clock-driven) + `engine/opl.c` (own OPL2 emulator, float, approximate envelope times, rhythm drums missing). Test: `SND_WAV=/tmp/t.wav ./mi_native ../mi_demo/ 2200 /tmp/x 0` writes mono 16-bit at 49716 Hz; `TRACE_SND=1`.
+
+## Data loading / retail (session 3)
+* Default: the shareware demo is embedded in `web/dist/index.html`. `?retail=true` (folder `retail/`, symlinked by `build.sh` to `web/retail`) or `?data=<folder>` fetches `000.LFL`, `DISK01..04.LEC` and `901..904.LFL` at runtime. Needs http (`cd web/dist && python3 -m http.server`), not `file://`. Docker compose mounts `./web/retail` read-only.
+* Engine: `res_add_disk(n, ...)` + `res_set_index(...)`; each disk's `FO` block maps room -> LF offset on that disk (`g_lf_disk[room]`). Native: `./mi_native ../web/retail/ <frames> ...`.
+* Retail observations: same block family (LE/FO/LF/RO/HD/BX/SA/BM/OI/OC/EX/EN/LS/SC/SO/CO); new `PA` (768-byte palette), `CC` (colour cycling), `SP`; `BM` uses 32-bit strip offsets (VGA codec); 84 rooms, ~202 scripts, ~172 sounds, ~181 costumes. It loads and boots to room 90 with the demo code; graphics/costumes/scripts untested.
+
+## Retail VGA graphics (session 3)
+* Room `PA` block: u16 0x0300 then (after 8-byte block header + 2) 256 x RGB 8-bit (first colours are the standard VGA/EGA set). `g_vga` = room has a `PA` block; compositor uses `g_pal_rgb`.
+* Room `BM` / object `OI` images: `u32 total size, u32 offset per 8-px strip`; a strip = codec byte + first colour + LSB-first bit stream (codes 15-18 columns, 26-28 rows; code%10 = absolute-colour bits). Strips are the **HD height tall (can be 200, not only 144)**: decoding only 144 rows of a column-coded strip desynchronises the stream (vertical streak garbage). Our decoder is `gfx_decode_strip_vga`.
+* Costumes: retail uses the same classic format byte 0x58 (16-entry palette, `0xd8` = mirrored) - the palette bytes are simply full VGA indices, so only the `& 15` in `pixel_color` had to go. Verified on the lookout pirate.
+* Not yet for VGA: foreground mask planes (disabled when `g_vga`), actorOps sub 0x0d stores the raw index when `g_vga` (the demo EXE multiplies by 0x11 = EGA nibble pair; retail never used it in the intro, unverified against MONKEY.EXE - unpacked retail EXE is 112107 bytes vs demo 112075 but recompiled, not a patch), `CC` palette cycling, object `OI` layout check, actor palettes.
+
+## Retail EXE vs demo EXE (session 3)
+* `MONKEY.EXE` unpacks with the same LZEXE91 unpacker (112107 bytes vs demo 112075), recompiled (code layout differs, not a patch).
+* Opcode table: retail DS image offset **0x1a4d2** (demo 0x1a5bc), 256 far pointers; the opcode -> handler partition is **identical** (103 handlers, same opcode groups), so opcode numbering/operand layout carries over. Handler code differs in size by a few instructions each (recompile).
+* roomOps retail sub-ops 1..7 = same set as demo (1 camera limits, 2 colour remap with index < 0x100, 3 setScreen, 4 palette entry (not implemented), 5/6 shake on/off, 7 scale). Our `g_room_pal` is now 256 entries and applied to VGA output.
+* Retail key variables after boot: mainmenu(50)=319 (F5), restart(42)=322 (F8), pause(43)=32 (space), cutscene exit(24)=27 (Esc). Menu/pause are EXE-native UI (not scripts): not implemented.
+* Retail decompile route: `analyzeHeadless ... -import MIDEMO_UNP.EXE -processor "x86:LE:16:Real Mode" -postScript work/gh/scripts/MkFuncs.java addrs.txt out.c`, Ghidra linear = 0x10000 + image offset.
+
+## Save / load menu (our own, session 3)
+* The original F5 menu is EXE-native (plain box: Save/Load/Play/Quit buttons, DOS file I/O); we do not port it. Ours: `engine/menu.c` (overlay in the game's fonts, 10 slots, name entry, teal rounded buttons), opened with F5 while input is enabled; Esc / F5 / right click closes; the game is paused behind it, music continues.
+* State: `engine/state.c` streams every module's state through one routine (`vm_state`, `eng_state`, `act_state`, `ui_state`, `snd_state`; `SIO()` writes or reads). Pointers into resource data (script code, object code, box matrix) are stored as (disk, offset). Zero-run packed (~6-10 KB). A save is refused if a pointer can't be described; header checks struct sizes and a per-game signature (demo/retail saves never mix). Music restarts from its beginning on load.
+* Storage: browser `localStorage` keys `mi.<ns>.slotN.meta|data` (ns = `demo`, `retail` or the `?data=` folder), via `EM_JS` in `main_wasm.c`; native test harness uses `./saves/`. Test: `SAVE_AT=<frame> LOAD_AT=<frame> ./mi_native ...`.
+* Not saved: message text on screen, palette-cycle state, exact music position.
+
+## Sound effects (AdLib FX sequencer, session 3)
+* Effect = `AD` block with `+8 != 0x80`: `+6` priority, `+7` slot 0..2 (slot s drives hardware voices 3s..3s+2), commands from `+8`: `01` instrument (15 B), `02` note (11 B = two 5-byte parameter notes), `80` loop channel, other byte = start of next channel, `FF` end. EXE `1fe8:223d` (start), `2963` (parse), `2a4c` (play), `2af6/2b4a/2d8b` (note stages/envelope); runs every 4th ISR (counter DS:0x172 = 4) = 118 Hz, **only while no music plays** (ISR `0x2470` calls `28fc` only if music pos [0] == 0; a new effect is ignored while music plays). Identical ISR code in retail.
+* Tables verified byte-for-byte against the EXE (DS:0x440..0x4cc: bias, steps `1,4,6,...,1200`, adjust `0..65535 step 4369`, scale `255,7,63,15,63,15,63`, register base/mask/shift) and match ScummVM `player_ad.cpp`; LFSR seed 1 / xor 0xB8.
+* Implementation: `engine/sound.c` (`fx_*`). Demo's door sound (id 2, script 26) renders as a ~0.2 s decaying high-pitched noise burst (feedback FM). Not verified by ear.

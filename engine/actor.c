@@ -1,5 +1,6 @@
 /* Actors: state, actorOps, walking, animation (skeleton; costume rendering is in costume.c) */
 #include "engine.h"
+#include "state.h"
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -44,11 +45,11 @@ void vm_actor_ops(int a, int sub, const s16 *p, const u8 *text, int tlen)
 	case 10: act_init_ex(a, 0); break;
 	case 11: ac->elevation = p[0]; ac->needs_redraw = 1; break;
 	case 12: ac->init_frame = 1; ac->walk_frame = 2; ac->stand_frame = 3; ac->talk_start = 4; ac->talk_stop = 5; break;
-	case 13: if (p[0] >= 0 && p[0] < 16) { ac->palette[p[0]] = (u8)(p[1] * 0x11 & 0xFF); ac->needs_redraw = 1; } break;
+	case 13: if (getenv("TRACE_PAL")) fprintf(stderr, "actorOps palette1 actor=%d idx=%d val=%d\n", a, p[0], p[1]); if (p[0] >= 0 && p[0] < 16) { ac->palette[p[0]] = (u8)(g_vga ? p[1] : (p[1] * 0x11 & 0xFF))   /* EGA stores a nibble pair; retail (VGA) stores the palette index itself */; ac->needs_redraw = 1; } break;
 	case 14: if (getenv("TRACE_TXT")) fprintf(stderr, "talkColor actor=%d color=%d\n", a, p[0]); ac->talk_color = (u8)p[0]; break;
 	case 15: strncpy(ac->name, (const char *)text, 23); break;
 	case 16: ac->init_frame = (u8)p[0]; break;
-	case 17: for (int i = 0; i < 16; i++) if ((u16)p[i] != 0xFF) ac->palette[i] = (u8)p[i]; ac->needs_redraw = 1; break;
+	case 17: if (getenv("TRACE_PAL")) { fprintf(stderr, "actorOps palette17 actor=%d:", a); for (int i = 0; i < 16; i++) fprintf(stderr, " %d", p[i]); fprintf(stderr, "\n"); } for (int i = 0; i < 16; i++) if ((u16)p[i] != 0xFF) ac->palette[i] = (u8)p[i]; ac->needs_redraw = 1; break;
 	case 18: ac->width = p[0]; break;
 	case 19: ac->scale = (u8)p[0]; ac->needs_redraw = 1; break;
 	default: break;
@@ -128,3 +129,5 @@ void act_update_all(void)
 	}
 }
 const u8 *act_name(int a) { return (const u8 *)g_actors[a].name; }
+
+void act_state(StateIO *io) { SIO(io, g_actors); SIO(io, g_walk_dir); }

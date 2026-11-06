@@ -12,12 +12,16 @@
   canvas { width:100%; aspect-ratio:320/200; image-rendering:pixelated; background:#000; display:block; cursor:crosshair; border:1px solid #333; }
   #status { min-height:1.4em; color:#9ab; }
   small { color:#789; }
+  #menubtn { font:inherit; font-weight:700; color:#fff; background:#1e8e98; border:1px solid #3ac; border-radius:8px; padding:4px 14px; cursor:pointer; }
+  #menubtn:hover:not(:disabled) { background:#40c4ce; }
+  #menubtn:disabled { opacity:.45; cursor:default; }
+  #bar { display:flex; gap:12px; align-items:center; flex-wrap:wrap; justify-content:center; }
 </style>
 </head>
 <body>
 <div id="wrap"><canvas id="screen" width="320" height="200" tabindex="0"></canvas></div>
 <div id="status">Loading…</div>
-<small>Left click = left button, right click = right button, keys go to the game. ESC skips cutscenes. Music: the AdLib theme plays once you have clicked or pressed a key (browser autoplay rules).</small>
+<div id="bar"><button id="menubtn" disabled title="Save / load (F5)">F5 &nbsp;Save / Load</button><small>ESC skips cutscenes. Saves go to browser storage. Music: the AdLib theme plays once you have clicked or pressed a key (browser autoplay rules).</small></div>
 <script>
 /*__DATA__*/
 </script>
@@ -34,11 +38,33 @@
   try {
     const mod = await MI();
     const put = (bytes) => { const p = mod._mi_alloc(bytes.length); mod.HEAPU8.set(bytes, p); return p; };
-    const lec = b64(MI_DATA.lec), idx = b64(MI_DATA.idx);
-    const r = mod._mi_init(put(lec), lec.length, put(idx), idx.length);
-    if (r) throw new Error('resource init failed (' + r + ')');
-    for (const [id, s] of Object.entries(MI_DATA.charsets)) { const d = b64(s); mod._mi_charset(+id, put(d), d.length); }
+    // data source: the embedded shareware demo by default; ?retail=true (folder "retail/") or ?data=<folder> fetches the
+    // game files at runtime instead (needs http(s): browsers block fetch() from file://)
+    const q = new URLSearchParams(location.search);
+    const base = q.get('data') ? q.get('data').replace(/\/?$/, '/') : (q.get('retail') === 'true' || q.get('retail') === '1') ? 'retail/' : null;
+    window.__saveNs = base === null ? 'demo' : (base === 'retail/' ? 'retail' : base.replace(/[^A-Za-z0-9_-]/g, '_'));   // saves are kept per game in localStorage
+    let disks = [], index, charsets = {};
+    if (base === null) {
+      disks = [b64(MI_DATA.lec)]; index = b64(MI_DATA.idx);
+      for (const [id, s] of Object.entries(MI_DATA.charsets)) charsets[id] = b64(s);
+    } else {
+      status.textContent = 'Loading game data from ' + base + ' …';
+      const get = async (name, optional) => {
+        let r; try { r = await fetch(base + name); } catch (e) { throw new Error('cannot fetch ' + base + name + ' (serve this page over http, not file://)'); }
+        if (!r.ok) { if (optional) return null; throw new Error(base + name + ': HTTP ' + r.status); }
+        return new Uint8Array(await r.arrayBuffer());
+      };
+      index = await get('000.LFL');
+      for (let n = 1; n <= 4; n++) { const d = await get('DISK0' + n + '.LEC', n > 1); if (d) disks[n - 1] = d; else break; }
+      for (const id of [1, 2, 3, 4]) { const c = await get('90' + id + '.LFL', true); if (c) charsets[id] = c; }
+    }
+    disks.forEach((d, n) => { const r = mod._mi_add_disk(n, put(d), d.length); if (r) throw new Error('disk ' + (n + 1) + ' rejected (' + r + ')'); });
+    if (mod._mi_set_index(put(index), index.length)) throw new Error('index rejected');
+    for (const [id, d] of Object.entries(charsets)) mod._mi_charset(+id, put(d), d.length);
     mod._mi_start();
+    // retail: by default skip the copy-protection wheel (needs the code sheet) and let the boot script continue into the intro.
+    // ?protection=1 keeps the real wheel; ?room=N additionally jumps straight into room N (developer shortcut, state is incomplete)
+    if (base !== null && q.get('protection') !== '1') { for (let i = 0; i < 30; i++) mod._mi_frame(); mod._mi_start_at(+(q.get('room') || 0)); }
     status.textContent = '';
     const toGame = (e) => {
       const r = canvas.getBoundingClientRect();
@@ -66,6 +92,8 @@
       } catch (e) { console.warn('audio unavailable', e); }
     }
     for (const ev of ['mousedown', 'keydown', 'touchstart']) window.addEventListener(ev, startAudio);
+    const menuBtn = document.getElementById('menubtn');
+    menuBtn.addEventListener('click', () => { if (!menuBtn.disabled) { mod._mi_key(319); startAudio(); } menuBtn.blur(); canvas.focus(); });
     window.__mi = mod; window.__frames = 0;
     let last = performance.now(), acc = 0; const SPEED = +(new URLSearchParams(location.search).get('speed') || 1);
     function tick(now) {
@@ -78,6 +106,7 @@
       }
       if (acc > interval * 60) acc = 0;
       if (location.hash === '#debug') status.textContent = 'frames=' + window.__frames + ' room=' + mod._mi_room();
+      menuBtn.disabled = !mod._mi_menu_available();
       canvas.style.cursor = mod._mi_cursor_visible() ? 'crosshair' : 'none';
       if (n) { img.data.set(mod.HEAPU8.subarray(mod._mi_framebuffer(), mod._mi_framebuffer() + 320 * 200 * 4)); ctx.putImageData(img, 0, 0); }
       requestAnimationFrame(tick);

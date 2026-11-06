@@ -1,5 +1,7 @@
 /* UI: charset text, talk messages, verbs, strings, cursor, input routing and the compositor. */
 #include "engine.h"
+#include "state.h"
+#include "menu.h"
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -9,7 +11,7 @@ int g_view_top = VIEW_TOP, g_view_h = 144;
 u8 g_ui[SCREEN_W * SCREEN_H];          /* persistent bitmap for the non-room rows (text line, verbs) */
 u8 g_txt[SCREEN_W * SCREEN_H];         /* transient text overlay (0xFF = transparent) */
 u32 g_rgb[SCREEN_W * SCREEN_H];
-extern u8 g_room_pal[16];
+extern u8 g_room_pal[256];
 extern int vm_pop_sentence(int *, int *, int *);
 int g_charset_id = 1;
 
@@ -36,6 +38,7 @@ static int cs_string_w(int cs, const u8 *s, int len)
 	}
 	return w;
 }
+static int cs_outline = -1;                       /* >= 0: palette index for the glyph's outline pixels (overlay menu) */
 static void cs_draw_char(u8 *dst, int dst_w, int dst_h, int cs, int ch, int x, int y, int color)
 {
 	int w, h, xo, yo; const u8 *g = cs_glyph(cs, ch, &w, &h, &xo, &yo); if (!g) return;
@@ -46,7 +49,7 @@ static void cs_draw_char(u8 *dst, int dst_w, int dst_h, int cs, int ch, int x, i
 		for (int k = 0; k < bpp; k++, bit++) v = (v << 1) | ((g[bit >> 3] >> (7 - (bit & 7))) & 1);
 		if (!v) continue;
 		/* f020: colour table [0x2860+v]: v==1 is the text colour, v>=2 comes from the charset's colour map (e.g. black outline) */
-		int col = v == 1 ? color : d[6 + v - 1];
+		int col = v == 1 ? color : (cs_outline >= 0 ? cs_outline : d[6 + v - 1]);
 		int px = x + c, py = y + r;
 		if (px >= 0 && px < dst_w && py >= 0 && py < dst_h) dst[py * dst_w + px] = (u8)col;
 	}
@@ -322,8 +325,9 @@ void ui_cursor_cmd(int sub, int a, int b, int c)
 void ui_set_screen(int top, int height) { g_view_top = top; g_view_h = height; if (g_view_h > 200 - top) g_view_h = 200 - top; if (g_view_h <= 0) g_view_h = 144; }
 
 static int pending_click, click_x, click_y, click_btn, pending_key;
-void eng_click(int x, int y, int btn) { pending_click = 1; click_x = x; click_y = y; click_btn = btn; g_mouse_x = x; g_mouse_y = y; }
-void eng_key(int key) { pending_key = key; g_key_pressed = key; }
+void eng_click(int x, int y, int btn) { g_mouse_x = x; g_mouse_y = y; if (menu_is_open()) { menu_click(x, y, btn); return; } pending_click = 1; click_x = x; click_y = y; click_btn = btn; g_mouse_x = x; g_mouse_y = y; }
+void eng_key(int key) { if (menu_is_open()) { menu_key(key); return; } if (key == 319 && userput > 0) { menu_try_open(); return; }   /* F5 */
+	pending_key = key; g_key_pressed = key; }
 
 static void run_verb_script(int area, int val, int mode)
 {
@@ -333,22 +337,31 @@ static void run_verb_script(int area, int val, int mode)
 }
 static int sentence_step_pending;
 
+/* "undo" for a pending verb (picked by hotkey or click): re-select the Walk to verb, as if it had been clicked */
+static int walk_verb_id(void)
+{
+	for (int i = 1; i < NUM_VERBS; i++) { VerbSlot *v = &verbs[i]; if (v->used && v->on == 1 && !v->saveid && v->id && !strncmp((char *)v->name, "Walk to", 7)) return v->id; }
+	return 0;
+}
 int ui_tick(void)
 {
 	ui_msg_timer(g_vars[VAR_TIMER_NEXT] > 0 ? g_vars[VAR_TIMER_NEXT] : 4);
 	if (pending_key) {
 		int k = pending_key; pending_key = 0;
+		if (k == 27 && userput > 0) { int w = walk_verb_id(); if (w) run_verb_script(1, w, 1); }        /* Esc also cancels a selected verb */
 		if (k == g_vars[VAR_CUTSCENEEXIT_KEY] && g_vars[VAR_CUTSCENEEXIT_KEY]) { extern void vm_do_override(void); vm_do_override(); g_vars[VAR_OVERRIDE] = 1; txt_clear(); }
 		else if (k == '.' || k == g_vars[VAR_TALKSTOP_KEY]) ui_skip_msg();
 		else if (userput > 0) {                                  /* a14e: input only while userput > 0 */
+			/* verb hotkeys (T = Talk to, G = Give, ...) are deliberately disabled; other keys still go to the key script */
 			int v = 0; for (int i = 1; i < NUM_VERBS; i++) if (verbs[i].used && verbs[i].on == 1 && verbs[i].key == k) v = verbs[i].id;
-			if (v) run_verb_script(1, v, 1); else run_verb_script(4, k, 1);
+			if (!v) run_verb_script(4, k, 1);
 		}
 	}
 	if (pending_click) {
 		pending_click = 0;
 		int mode = click_btn == 2 ? 2 : 1;
-		if (userput > 0) {
+		if (mode == 2 && userput > 0 && walk_verb_id()) { run_verb_script(1, walk_verb_id(), 1); mode = 0; }   /* right click = back to Walk to */
+		if (userput > 0 && mode) {
 			int vx = click_x, vy = click_y;
 			if (vy < g_view_top || vy >= g_view_top + g_view_h) { int v = verb_at(vx, vy); run_verb_script(1, v, mode); }
 			else {
@@ -411,10 +424,31 @@ void render_frame(void)
 #endif
 	(void)hover_x; (void)hover_y;
 	for (int i = 0; i < SCREEN_W * SCREEN_H; i++) {
-		const u8 *c = g_ega_palette[g_room_pal[scr[i] & 15] & 15];
+		const u8 *c = g_vga ? g_pal_rgb[g_room_pal[scr[i]]] : g_ega_palette[g_room_pal[scr[i] & 15] & 15];
 		g_rgb[i] = 0xFF000000u | (c[0] << 16) | (c[1] << 8) | c[2];
 	}
+	menu_draw(g_rgb);
 }
 void ui_init(void) { memset(g_txt, 0xFF, sizeof g_txt); }
 
-int ui_cursor_visible(void) { return cursor_on > 0; }
+int ui_cursor_visible(void) { return cursor_on > 0 || menu_is_open(); }
+int ui_input_enabled(void) { return userput > 0; }
+int ui_text_w(int cs, const char *s) { return cs_string_w(cs, (const u8 *)s, (int)strlen(s)); }
+void ui_text(u8 *dst, int cs, const char *s, int x, int y, int color, int outline)
+{
+	cs_outline = outline;
+	for (const u8 *p = (const u8 *)s; *p; p++) { cs_draw_char(dst, SCREEN_W, SCREEN_H, cs, *p, x, y, color); x += cs_char_w(cs, *p); }
+	cs_outline = -1;
+}
+
+/* ---- save/load (state.c) ---- */
+void ui_state(StateIO *io)
+{
+	SIO(io, verbs); SIO(io, g_strings); SIO(io, cursor_on); SIO(io, userput); SIO(io, g_charset_id); SIO(io, g_view_top); SIO(io, g_view_h); SIO(io, g_cursor_state);
+}
+void ui_state_done(void)
+{
+	memset(g_ui, 0, sizeof g_ui); memset(g_txt, 0xFF, sizeof g_txt);
+	for (int i = 0; i < NUM_VERBS + 1; i++) verbs[i].lvalid = 0;
+	pending_click = 0; pending_key = 0; msg_state = 0; msg_timer = 0; msg_keep = 0; g_vars[VAR_HAVE_MSG] = 0; g_vars[VAR_TALK_ACTOR] = 0;
+}

@@ -106,7 +106,7 @@ static int pixel_color(const Actor *a, const CostumeInfo *c, int idx)
 {
 	int col = c->palette[idx];
 	if (a->palette[idx] != 0xFF) col = a->palette[idx];
-	return col & 15;
+	return g_vga ? (col & 0xFF) : (col & 15);   /* retail: costume palette entries are full VGA indices */
 }
 
 extern u8 *g_mask; extern int g_room_w;

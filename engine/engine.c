@@ -1,5 +1,7 @@
 /* Engine services: rooms, objects, inventory, camera, resources, misc ops. */
 #include "engine.h"
+#include "state.h"
+#include "menu.h"
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -11,7 +13,7 @@ s16 g_cam_cur = 160, g_cam_dest = 160, g_cam_follow;
 u16 g_inventory[NUM_INVENTORY];
 u8 g_inv_obj_data[NUM_INVENTORY][64];
 u8 g_pseudo_room[128];
-u8 g_room_pal[16];
+u8 g_room_pal[256];   /* colour remap (roomOps 2); 16 used in EGA, 256 in retail VGA */
 int g_ticks_per_frame = 4;
 int g_mouse_x, g_mouse_y, g_mouse_buttons, g_key_pressed;
 static u8 g_obj_names_over[NUM_OBJECTS][64]; static u8 g_obj_has_name_over[NUM_OBJECTS];
@@ -126,6 +128,7 @@ static void rebuild_bg(void)
 	for (int i = 0; i < g_nobjs; i++) {
 		RoomObject *o = &g_objs[i];
 		int st = eng_get_state(o->id);
+		if (getenv("NOOBJ")) continue;
 		if (st <= 0 || !o->n_oi || !parent_chain_ok(o)) continue;
 		int idx = st - 1; if (idx >= o->n_oi) idx = o->n_oi - 1;
 		const u8 *oi = o->oi[idx]; if (!oi) continue;
@@ -135,7 +138,7 @@ static void rebuild_bg(void)
 		gfx_draw_strips(g_bg, g_room_w, g_room_h, img, o->x / 8, o->w / 8, o->y, o->h);
 		/* foreground mask stored after the image: u16 size, u16 strip offsets, then per-strip RLE (1 byte = 8 pixels per row) */
 		{
-			const u8 *mk = img + rd16(img); int ns = o->w / 8;
+			const u8 *mk = img + (g_vga ? rd32(img) : rd16(img)); int ns = o->w / 8;
 			if (rd16(mk) > 2 * ns + 2) for (int sI = 0; sI < ns; sI++) {
 				const u8 *p = mk + rd16(mk + 2 + 2 * sI); int row = 0;
 				while (row < o->h) {
@@ -236,7 +239,8 @@ void eng_load_room_data(int room)
 	u32 sz;
 	const u8 *hd = res_room_block(room, "HD", 0, &sz);
 	g_room_w = rd16(hd + 6); g_room_h = rd16(hd + 8);
-	if (g_room_h > 144) g_room_h = 144;
+	{ u32 psz; const u8 *pa = res_room_block(room, "PA", 0, &psz); g_vga = pa != NULL;     /* retail: 256-colour room palette */
+	  if (pa) for (int i = 0; i < 256 && 8 + 3 * i + 2 < (int)psz; i++) { g_pal_rgb[i][0] = pa[8 + 3 * i]; g_pal_rgb[i][1] = pa[9 + 3 * i]; g_pal_rgb[i][2] = pa[10 + 3 * i]; } }
 	free(g_roomimg); free(g_bg); free(g_mask); free(g_roomplane); g_roomplane = NULL;
 	g_roomimg = calloc((size_t)g_room_w * g_room_h, 1); g_bg = calloc((size_t)g_room_w * g_room_h, 1); g_mask = calloc((size_t)g_room_w * g_room_h, 1);
 	const u8 *bm = res_room_block(room, "BM", 0, &sz);
@@ -244,7 +248,7 @@ void eng_load_room_data(int room)
 	/* The BM payload is a chain of images, each starting with its own u16 size (FUN_1000_2e02 counts up to 4):
 	 * image 0 = background, image 1 = foreground mask plane (per strip: byte-per-row RLE, MSB = leftmost pixel). */
 	if (bm) {
-		const u8 *img0 = bm + 6; u32 s0 = rd16(img0);
+		const u8 *img0 = bm + 6; u32 s0 = g_vga ? rd32(img0) : rd16(img0);     /* retail: u32 image size; the mask plane that follows keeps the u16 layout */
 		if (s0 && 6 + s0 + 2 <= sz) {
 			const u8 *pl = img0 + s0; int ns = g_room_w / 8;
 			if (rd16(pl) > 2 * ns + 2) {
@@ -304,7 +308,7 @@ void eng_load_room_data(int room)
 	g_exit_code = g_entry_code = NULL;
 	const u8 *ex = res_room_block(room, "EX", 0, &g_exit_size); if (ex) g_exit_code = ex + 6;
 	const u8 *en = res_room_block(room, "EN", 0, &g_entry_size); if (en) g_entry_code = en + 6;
-	for (int i = 0; i < 16; i++) g_room_pal[i] = (u8)i;
+	for (int i = 0; i < 256; i++) g_room_pal[i] = (u8)i;
 	/* objects that already carry a state are composed */
 	rebuild_bg();
 }
@@ -444,12 +448,13 @@ void eng_save_restore_verbs(int sub, int a, int b, int c) { extern void ui_save_
 
 void eng_room_ops(int sub, int a, int b, int c, int d, int e)
 {
+	if (getenv("TRACE_RO")) fprintf(stderr, "roomOps sub=%d a=%d b=%d c=%d d=%d e=%d (room %d, script %d)\n", sub, a, b, c, d, e, g_room, g_slots[g_cur_slot].number);
 	switch (sub) {
 	case 1: {                                           /* roomScroll: set camera limits */
 		int mx = (g_room_w / 8 - 20) * 8;
 		if (a < 160) a = 160; if (a > mx) a = mx; if (b < 160) b = 160; if (b > mx) b = mx;
 		g_vars[VAR_CAMERA_MIN_X] = a; g_vars[VAR_CAMERA_MAX_X] = b; break; }
-	case 2: if (b >= 0 && b < 16) g_room_pal[b] = (u8)a; g_screen_dirty = 1; break;       /* palette remap */
+	case 2: if (b >= 0 && b < 256) g_room_pal[b] = (u8)a; g_screen_dirty = 1; break;       /* palette remap */
 	case 3: { extern void ui_set_screen(int, int); ui_set_screen(a, b); break; }
 	case 4: break;
 	case 5: case 6: break;                               /* shake */
@@ -475,10 +480,11 @@ extern int ui_tick(void);
 void eng_frame(void)
 {
 	int ticks = g_vars[VAR_TIMER_NEXT] > 0 ? g_vars[VAR_TIMER_NEXT] : 4;
+	if (menu_is_open()) { snd_run(ticks); menu_tick(); render_frame(); return; }      /* the game is paused behind the menu; music goes on */
 	g_vars[VAR_TIMER] = ticks; g_vars[VAR_TIMER_TOTAL] += ticks;
 	g_vars[VAR_TMR_1] += ticks; g_vars[VAR_TMR_2] += ticks; g_vars[VAR_TMR_3] += ticks;
 	vm_tick_delays(ticks);
-	snd_run(ticks);                    /* synthesiser follows the game clock (sound.c) */
+	snd_run(ticks); { extern int snd_beat(void); g_vars[VAR_MUSIC_TIMER] = (s16)snd_beat(); }                    /* synthesiser follows the game clock (sound.c) */
 	g_vars[VAR_CAMERA_POS_X] = g_cam_cur;
 	g_vars[VAR_MOUSE_X] = (s16)g_mouse_x; g_vars[VAR_MOUSE_Y] = (s16)g_mouse_y;
 	{ extern int g_view_top, g_view_h; int cx = g_cam_cur - 160; if (cx < 0) cx = 0;
@@ -499,7 +505,25 @@ void eng_init(void)
 	for (int i = 0; i < 16; i++) act_init(i);
 	g_vars[VAR_TIMER_NEXT] = 4; g_vars[VAR_CHARINC] = 4; g_vars[VAR_CURRENT_LIGHTS] = 11; g_vars[VAR_NUM_ACTOR] = 13;
 	g_vars[VAR_ACTOR_RANGE_MIN] = 1; g_vars[VAR_ACTOR_RANGE_MAX] = 12; g_vars[VAR_VIDEOMODE] = 13; g_vars[VAR_SOUNDCARD] = 3;   /* EXE sound mode 3 = AdLib (DS:0x1be6) */
-	for (int i = 0; i < 16; i++) g_room_pal[i] = (u8)i;
+	for (int i = 0; i < 256; i++) g_room_pal[i] = (u8)i;
 	g_mouse_x = 104; g_mouse_y = 56;
 	vm_boot();
 }
+
+/* ---- save/load (state.c) ---- */
+void eng_state(StateIO *io)
+{
+	SIO(io, g_cam_cur); SIO(io, g_cam_dest); SIO(io, g_cam_follow);
+	SIO(io, g_inventory); SIO(io, g_inv_obj_data); SIO(io, g_pseudo_room); SIO(io, g_room_pal); SIO(io, g_effect);
+	SIO(io, g_obj_owner); SIO(io, g_obj_class); SIO(io, g_obj_names_over); SIO(io, g_obj_has_name_over);
+	SIO(io, g_nboxes); SIO(io, g_boxes); sio_ptr(io, &g_box_matrix); sio_ptr(io, &g_box_matrix_end);
+	SIO(io, g_nobjs);
+	for (int i = 0; i < MAX_ROOM_OBJECTS; i++) {
+		RoomObject tmp = g_objs[i]; const u8 *oc = tmp.oc; const u8 *oi[16]; for (int k = 0; k < 16; k++) oi[k] = tmp.oi[k];
+		tmp.oc = NULL; for (int k = 0; k < 16; k++) tmp.oi[k] = NULL;
+		SIO(io, tmp); sio_ptr(io, &oc); for (int k = 0; k < 16; k++) sio_ptr(io, &oi[k]);
+		if (!io->saving) { tmp.oc = oc; for (int k = 0; k < 16; k++) tmp.oi[k] = oi[k]; g_objs[i] = tmp; }
+	}
+	SIO(io, g_scale_slots);
+}
+void eng_state_done(void) { walk_load_matrix(); rebuild_bg(); g_screen_dirty = 1; }
