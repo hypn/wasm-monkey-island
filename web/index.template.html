@@ -17,7 +17,7 @@
 <body>
 <div id="wrap"><canvas id="screen" width="320" height="200" tabindex="0"></canvas></div>
 <div id="status">Loading…</div>
-<small>Left click = left button, right click = right button, keys go to the game. ESC skips cutscenes. (Sound is not implemented.)</small>
+<small>Left click = left button, right click = right button, keys go to the game. ESC skips cutscenes. Music: the AdLib theme plays once you have clicked or pressed a key (browser autoplay rules).</small>
 <script>
 /*__DATA__*/
 </script>
@@ -53,11 +53,24 @@
       let k = keymap[e.key]; if (k === undefined && e.key.length === 1) k = e.key.charCodeAt(0);
       if (k !== undefined) { mod._mi_key(k); e.preventDefault(); }
     });
+    // audio: the engine synthesises AdLib (OPL2) into a ring buffer; this callback just drains it
+    let actx = null;
+    function startAudio() {
+      if (actx) { if (actx.state === 'suspended') actx.resume(); return; }
+      try {
+        const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+        actx = new AC(); const N = 2048, node = actx.createScriptProcessor(N, 0, 1);
+        const p = mod._mi_alloc(N * 4);
+        node.onaudioprocess = (e) => { const out = e.outputBuffer.getChannelData(0); mod._mi_snd_pull(p, N, actx.sampleRate); out.set(mod.HEAPF32.subarray(p >> 2, (p >> 2) + N)); };
+        node.connect(actx.destination); if (actx.state === 'suspended') actx.resume();
+      } catch (e) { console.warn('audio unavailable', e); }
+    }
+    for (const ev of ['mousedown', 'keydown', 'touchstart']) window.addEventListener(ev, startAudio);
     window.__mi = mod; window.__frames = 0;
     let last = performance.now(), acc = 0; const SPEED = +(new URLSearchParams(location.search).get('speed') || 1);
     function tick(now) {
       acc += (now - last) * SPEED; last = now;
-      const interval = mod._mi_ticks_per_frame() * 1000 / 60;
+      const interval = mod._mi_frame_ms();
       let n = 0;
       while (acc >= interval && n < 60) {
         if (mod._mi_frame()) { status.textContent = 'The game has ended.'; return; }

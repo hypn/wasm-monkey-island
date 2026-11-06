@@ -21,6 +21,8 @@ int main(int argc, char **argv)
 	for (int i = 0; i < 3; i++) { snprintf(p, sizeof p, "%s%s", D, cs[i]); u8 *d = rdf(p, &c); res_add_charset(ids[i], d, c); }
 	extern void eng_init(void); eng_init();
 	if (getenv("TRACE")) g_trace = 1;
+	FILE *wav = getenv("SND_WAV") ? fopen(getenv("SND_WAV"), "wb") : NULL; u32 wav_n = 0;   /* mono 16-bit at 49716 Hz; header patched at the end */
+	if (wav) { u8 h[44] = {0}; fwrite(h, 1, 44, wav); }
 	for (int f = 0; f < frames; f++) {
 		if (getenv("CLICKS")) { /* frame:x:y:btn,... */
 			char *c = strdup(getenv("CLICKS")); for (char *t = strtok(c, ","); t; t = strtok(NULL, ",")) { int ff, x, y, b; if (sscanf(t, "%d:%d:%d:%d", &ff, &x, &y, &b) == 4 && ff == f) { if (b == 0) { g_mouse_x = x; g_mouse_y = y; } else eng_click(x, y, b); } } free(c);
@@ -32,6 +34,7 @@ int main(int argc, char **argv)
 		if (getenv("WALKOBJ") && f == 800) { extern void act_walk_to_obj(int,int); act_walk_to_obj(1, atoi(getenv("WALKOBJ"))); }
 		if (getenv("TRACE_FROM") && f == atoi(getenv("TRACE_FROM"))) g_trace = 1;
 		eng_frame();
+		{ extern int snd_read_raw(s16 *, int); s16 sb[4096]; int n; while ((n = snd_read_raw(sb, 4096)) > 0) { if (wav) { fwrite(sb, 2, n, wav); wav_n += n; } } }
 		if (g_halted) { fprintf(stderr, "halted at frame %d\n", f); break; }
 		if (every && f % every == 0) { snprintf(p, sizeof p, "%s_%04d.ppm", out, f); dump_ppm(p); }
 	}
@@ -41,6 +44,7 @@ int main(int argc, char **argv)
 		for (int y = 0; y < g_room_h; y++) for (int x = 0; x < g_room_w; x++) { int m = g_mask[y * g_room_w + x]; const unsigned char *c = g_ega_palette[g_bg[y * g_room_w + x] & 15]; fputc(m ? 255 : c[0] / 2, f); fputc(m ? 0 : c[1] / 2, f); fputc(m ? 0 : c[2] / 2, f); }
 		fclose(f);
 	}
+	if (wav) { u32 rate = 49716, bytes = wav_n * 2; u8 h[44]; memcpy(h, "RIFF", 4); u32 v = 36 + bytes; memcpy(h + 4, &v, 4); memcpy(h + 8, "WAVEfmt ", 8); v = 16; memcpy(h + 16, &v, 4); u16 t = 1; memcpy(h + 20, &t, 2); memcpy(h + 22, &t, 2); memcpy(h + 24, &rate, 4); v = rate * 2; memcpy(h + 28, &v, 4); t = 2; memcpy(h + 32, &t, 2); t = 16; memcpy(h + 34, &t, 2); memcpy(h + 36, "data", 4); memcpy(h + 40, &bytes, 4); fseek(wav, 0, SEEK_SET); fwrite(h, 1, 44, wav); fclose(wav); }
 	fprintf(stderr, "room=%d frames=%d\n", g_room, frames);
 	if (getenv("DUMP")) {
 		for (int i = 0; i < NUM_SLOTS; i++) if (g_slots[i].status) fprintf(stderr, "slot %d: script %d status %d where %d pc %u delay %d\n", i, g_slots[i].number, g_slots[i].status, g_slots[i].where, g_slots[i].pc, g_slots[i].delay);

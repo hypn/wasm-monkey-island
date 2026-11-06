@@ -117,7 +117,8 @@ void eng_screen_dirty(void);
 void eng_cursor_cmd(int sub, int a, int b, int c);
 void eng_room_ops(int sub, int a, int b, int c, int d, int e);
 void eng_resource_routine(int sub, int id);
-void eng_sound_start(int id); void eng_sound_stop(int id);
+void eng_sound_start(int id); void eng_sound_stop(int id); int eng_sound_running(int id);
+void snd_init(void); void snd_run(int ticks60); int snd_read_raw(s16 *dst, int n); int snd_pull(float *dst, int n, double out_rate);
 void eng_music(int id);
 void eng_set_screen_clear(int a, int b);
 int  eng_dist(int a, int b);
@@ -173,6 +174,9 @@ void eng_tick_timers(int ticks);
 int  eng_get_box_scale(int box);
 int  eng_box_in(int box, int x, int y);
 extern int g_ticks_per_frame;
+/* A game tick is 4 timer-ISR pairs... EXE main loop (FUN_1000_0000): ticks = [0x2842] >> 2 where [0x2842] counts every 2nd call of the
+ * 473.3 Hz timer ISR (PIT reload 2521), i.e. 1193182 / 2521 / 8 = 59.16 ticks per second (not 60). */
+#define TICKS_PER_SECOND (1193182.0 / 2521.0 / 8.0)
 
 /* input (platform) */
 extern int g_mouse_x, g_mouse_y, g_mouse_buttons, g_key_pressed;

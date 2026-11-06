@@ -102,4 +102,13 @@ headless Chrome: real clicks/keys, screenshots, `?speed=N` to run N times faster
 ## Open questions
 * Exit script of room 3 kills actors 1..9 (incl. ego); the original evidently keeps ego -> `eng_start_room` restores actors already assigned to the destination room.
 * Walking uses a straight line; the original is the box-matrix walker (`b600`, `cbb6`, `bd1c`, `b842`, `b9b2`) with scaling (`d430`, `SA` block).
-* Sound (`0N` resources, AdLib/PC speaker) not implemented. Object-class/untouchable and `FUN_1000_4196` exact hit-testing approximated.
+* Sound: AdLib music implemented (see "Sound" below); sound effects, PC speaker / CMS / Tandy drivers are not. Object-class/untouchable and `FUN_1000_4196` exact hit-testing approximated.
+
+
+## Sound (AdLib) - recovered from MIDEMO.EXE segment 1fe8
+* Sound modes (DS:0x1be6): 0 speaker, 1 ?, 2 CMS (Game Blaster, ports 0x220..), 3 **AdLib** (OPL2 at 0x388/0x389). Script var `soundcard` (48) = this mode; we set 3.
+* `SO` block (from `0N` dir) holds sub-blocks `WA` (CMS), `AD` (AdLib), `SP` (speaker) - u32 size, 2-char tag. The demo's only sound is id 4 (the theme), started by script 201 in the dock room (`startSound`, op 0x1c; `startMusic` op 0x02 is the same call, `stopMusic` = stop all).
+* Queue: `78f0` -> `58cc` pushes id, refcount `0x6218[id]++`; `isSoundRunning` (`77aa`) = refcount & 0x7f. Driver entry `223d` (AdLib).
+* Timer ISR `1fe8:2470` hooked on INT 8: PIT reload 0x09d9 (2521) = 473.3 Hz; game timer +1 every 2nd call; BIOS chain every 26th. Music: 8-bit tempo accumulator (`+9`), on overflow one "step"; step runs the event stream. Format documented at the top of `engine/sound.c`. Percussion/rhythm instruments (`inst[13]`) and the effects sequencer (`28fc`) are decoded but not implemented/tested.
+* AdLib init (`2100..`): reg 1=0, BD=0, 8=0, then 1=0x20 (waveform select). Note -> fnum: `n = note-0x1f; fnum = tab[n%12]; B0 = (n/12)<<2 | fnum>>8 | 0x20`, table DS:0x3d2. No velocity/volume handling.
+* Our implementation: `engine/sound.c` (driver, ring buffer, game-clock-driven) + `engine/opl.c` (own OPL2 emulator, float, approximate envelope times, rhythm drums missing). Test: `SND_WAV=/tmp/t.wav ./mi_native ../mi_demo2/ 2200 /tmp/x 0` writes mono 16-bit at 49716 Hz; `TRACE_SND=1`.

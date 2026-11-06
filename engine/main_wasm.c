@@ -29,9 +29,13 @@ EMSCRIPTEN_KEEPALIVE int mi_frame(void)
 }
 EMSCRIPTEN_KEEPALIVE u8 *mi_framebuffer(void) { return rgba; }
 EMSCRIPTEN_KEEPALIVE int mi_ticks_per_frame(void) { return g_vars[VAR_TIMER_NEXT] > 0 ? g_vars[VAR_TIMER_NEXT] : 4; }
+/* real duration of one engine frame in ms (game ticks run at 59.16 Hz, see TICKS_PER_SECOND) */
+EMSCRIPTEN_KEEPALIVE double mi_frame_ms(void) { return (g_vars[VAR_TIMER_NEXT] > 0 ? g_vars[VAR_TIMER_NEXT] : 4) * 1000.0 / TICKS_PER_SECOND; }
 EMSCRIPTEN_KEEPALIVE void mi_mouse_move(int x, int y) { g_mouse_x = x; g_mouse_y = y; }
 EMSCRIPTEN_KEEPALIVE void mi_mouse_click(int x, int y, int button) { eng_click(x, y, button); }
 EMSCRIPTEN_KEEPALIVE void mi_key(int k) { eng_key(k); }
+/* audio: the page's audio callback pulls resampled mono float samples (sound.c keeps the ring buffer) */
+EMSCRIPTEN_KEEPALIVE int mi_snd_pull(float *dst, int n, double rate) { return snd_pull(dst, n, rate); }
 EMSCRIPTEN_KEEPALIVE int mi_room(void) { return g_room; }
 extern int ui_cursor_visible(void);
 EMSCRIPTEN_KEEPALIVE int mi_cursor_visible(void) { return ui_cursor_visible(); }

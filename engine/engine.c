@@ -410,10 +410,6 @@ static void camera_update(void)
 
 /* ---------- misc ops ---------- */
 void eng_resource_routine(int sub, int id) { (void)sub; (void)id; }     /* everything is resident */
-void eng_sound_start(int id) { (void)id; }
-void eng_sound_stop(int id) { (void)id; }
-int  eng_sound_running(int id) { (void)id; return 0; }
-void eng_music(int id) { (void)id; }
 void eng_cursor_cmd(int sub, int a, int b, int c) { extern void ui_cursor_cmd(int, int, int, int); ui_cursor_cmd(sub, a, b, c); }
 extern int g_cutscene_slot;
 void eng_freeze_scripts(int v)
@@ -482,6 +478,7 @@ void eng_frame(void)
 	g_vars[VAR_TIMER] = ticks; g_vars[VAR_TIMER_TOTAL] += ticks;
 	g_vars[VAR_TMR_1] += ticks; g_vars[VAR_TMR_2] += ticks; g_vars[VAR_TMR_3] += ticks;
 	vm_tick_delays(ticks);
+	snd_run(ticks);                    /* synthesiser follows the game clock (sound.c) */
 	g_vars[VAR_CAMERA_POS_X] = g_cam_cur;
 	g_vars[VAR_MOUSE_X] = (s16)g_mouse_x; g_vars[VAR_MOUSE_Y] = (s16)g_mouse_y;
 	{ extern int g_view_top, g_view_h; int cx = g_cam_cur - 160; if (cx < 0) cx = 0;
@@ -498,10 +495,10 @@ void eng_frame(void)
 void ui_init(void);
 void eng_init(void)
 {
-	vm_init(); ui_init();
+	vm_init(); ui_init(); snd_init();
 	for (int i = 0; i < 16; i++) act_init(i);
 	g_vars[VAR_TIMER_NEXT] = 4; g_vars[VAR_CHARINC] = 4; g_vars[VAR_CURRENT_LIGHTS] = 11; g_vars[VAR_NUM_ACTOR] = 13;
-	g_vars[VAR_ACTOR_RANGE_MIN] = 1; g_vars[VAR_ACTOR_RANGE_MAX] = 12; g_vars[VAR_VIDEOMODE] = 13; g_vars[VAR_SOUNDCARD] = 0;
+	g_vars[VAR_ACTOR_RANGE_MIN] = 1; g_vars[VAR_ACTOR_RANGE_MAX] = 12; g_vars[VAR_VIDEOMODE] = 13; g_vars[VAR_SOUNDCARD] = 3;   /* EXE sound mode 3 = AdLib (DS:0x1be6) */
 	for (int i = 0; i < 16; i++) g_room_pal[i] = (u8)i;
 	g_mouse_x = 104; g_mouse_y = 56;
 	vm_boot();
