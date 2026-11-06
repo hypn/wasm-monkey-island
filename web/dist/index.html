@@ -57,11 +57,11 @@ else if (typeof define === 'function' && define['amd'])
   try {
     const mod = await MI();
     const put = (bytes) => { const p = mod._mi_alloc(bytes.length); mod.HEAPU8.set(bytes, p); return p; };
-    // data source: the embedded shareware demo by default; ?retail=true (folder "retail/") or ?data=<folder> fetches the
-    // game files at runtime instead (needs http(s): browsers block fetch() from file://)
+    // data source: the embedded shareware demo by default; ?retail=true fetches the retail game files from the folder "retail/"
+    // (needs http(s): browsers block fetch() from file://)
     const q = new URLSearchParams(location.search);
-    const base = q.get('data') ? q.get('data').replace(/\/?$/, '/') : (q.get('retail') === 'true' || q.get('retail') === '1') ? 'retail/' : null;
-    window.__saveNs = base === null ? 'demo' : (base === 'retail/' ? 'retail' : base.replace(/[^A-Za-z0-9_-]/g, '_'));   // saves are kept per game in localStorage
+    const base = (q.get('retail') === 'true' || q.get('retail') === '1') ? 'retail/' : null;
+    window.__saveNs = base === null ? 'demo' : 'retail';   // saves are kept per game in localStorage
     let disks = [], index, charsets = {};
     if (base === null) {
       disks = [b64(MI_DATA.lec)]; index = b64(MI_DATA.idx);
@@ -81,9 +81,8 @@ else if (typeof define === 'function' && define['amd'])
     if (mod._mi_set_index(put(index), index.length)) throw new Error('index rejected');
     for (const [id, d] of Object.entries(charsets)) mod._mi_charset(+id, put(d), d.length);
     mod._mi_start();
-    // retail: by default skip the copy-protection wheel (needs the code sheet) and let the boot script continue into the intro.
-    // ?protection=1 keeps the real wheel; ?room=N additionally jumps straight into room N (developer shortcut, state is incomplete)
-    if (base !== null && q.get('protection') !== '1') { for (let i = 0; i < 30; i++) mod._mi_frame(); mod._mi_start_at(+(q.get('room') || 0)); }
+    // retail: skip the copy-protection wheel (needs the code sheet) and let the boot script carry on into the intro.
+    if (base !== null) { for (let i = 0; i < 30; i++) mod._mi_frame(); mod._mi_start_at(0); }
     status.textContent = '';
     const toGame = (e) => {
       const r = canvas.getBoundingClientRect();
@@ -114,9 +113,9 @@ else if (typeof define === 'function' && define['amd'])
     const menuBtn = document.getElementById('menubtn');
     menuBtn.addEventListener('click', () => { if (!menuBtn.disabled) { mod._mi_key(319); startAudio(); } menuBtn.blur(); canvas.focus(); });
     window.__mi = mod; window.__frames = 0;
-    let last = performance.now(), acc = 0; const SPEED = +(new URLSearchParams(location.search).get('speed') || 1);
+    let last = performance.now(), acc = 0; window.__speed = 1;   // test hook (set from the console / test driver), not a URL option
     function tick(now) {
-      acc += (now - last) * SPEED; last = now;
+      acc += (now - last) * (window.__speed || 1); last = now;
       const interval = mod._mi_frame_ms();
       let n = 0;
       while (acc >= interval && n < 60) {

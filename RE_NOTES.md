@@ -71,7 +71,7 @@ compare against my engine frames:
   so it could not be used to check the dock scene (open item).
 Native engine tests: `engine/mi_native <dir> <frames> <prefix> <every>` with env `CLICKS=frame:x:y:btn,...`, `GOTO=<room>` (+`EX`,`EY`), `TRACE=1`, `TRACE_FROM=n`,
 `TRACE_ROOM=1`, `TRACE_OBJ=id`, `TRACE_VAR=n`, `TRACE_TXT=1`, `DUMP=1`; `work/sheet.py`/`ppm2png.py` build contact sheets. Browser test: `web/test/cdp.js` (CDP over
-headless Chrome: real clicks/keys, screenshots, `?speed=N` to run N times faster).
+headless Chrome: real clicks/keys, screenshots, set `window.__speed = N` in the page to run N times faster).
 
 ## Fixes after first play-test
 * `putActorInRoom(a,0)` also resets x,y to 0 (`FUN_1000_b118(a,0,0,0)`); the ego-restore in `eng_start_room` must restore room **and position** (ego starts at 360,100 off-screen right
@@ -114,7 +114,7 @@ headless Chrome: real clicks/keys, screenshots, `?speed=N` to run N times faster
 * Our implementation: `engine/sound.c` (driver, ring buffer, game-clock-driven) + `engine/opl.c` (own OPL2 emulator, float, approximate envelope times, rhythm drums missing). Test: `SND_WAV=/tmp/t.wav ./mi_native ../mi_demo/ 2200 /tmp/x 0` writes mono 16-bit at 49716 Hz; `TRACE_SND=1`.
 
 ## Data loading / retail (session 3)
-* Default: the shareware demo is embedded in `web/dist/index.html`. `?retail=true` (folder `retail/`, symlinked by `build.sh` to `web/retail`) or `?data=<folder>` fetches `000.LFL`, `DISK01..04.LEC` and `901..904.LFL` at runtime. Needs http (`cd web/dist && python3 -m http.server`), not `file://`. Docker compose mounts `./web/retail` read-only.
+* Default: the shareware demo is embedded in `web/dist/index.html`. `?retail=true` (folder `retail/`, symlinked by `build.sh` to `web/retail`) fetches `000.LFL`, `DISK01..04.LEC` and `901..904.LFL` at runtime. Needs http (`cd web/dist && python3 -m http.server`), not `file://`. Docker compose mounts `./web/retail` read-only.
 * Engine: `res_add_disk(n, ...)` + `res_set_index(...)`; each disk's `FO` block maps room -> LF offset on that disk (`g_lf_disk[room]`). Native: `./mi_native ../web/retail/ <frames> ...`.
 * Retail observations: same block family (LE/FO/LF/RO/HD/BX/SA/BM/OI/OC/EX/EN/LS/SC/SO/CO); new `PA` (768-byte palette), `CC` (colour cycling), `SP`; `BM` uses 32-bit strip offsets (VGA codec); 84 rooms, ~202 scripts, ~172 sounds, ~181 costumes. It loads and boots to room 90 with the demo code; graphics/costumes/scripts untested.
 
@@ -134,7 +134,7 @@ headless Chrome: real clicks/keys, screenshots, `?speed=N` to run N times faster
 ## Save / load menu (our own, session 3)
 * The original F5 menu is EXE-native (plain box: Save/Load/Play/Quit buttons, DOS file I/O); we do not port it. Ours: `engine/menu.c` (overlay in the game's fonts, 10 slots, name entry, teal rounded buttons), opened with F5 while input is enabled; Esc / F5 / right click closes; the game is paused behind it, music continues.
 * State: `engine/state.c` streams every module's state through one routine (`vm_state`, `eng_state`, `act_state`, `ui_state`, `snd_state`; `SIO()` writes or reads). Pointers into resource data (script code, object code, box matrix) are stored as (disk, offset). Zero-run packed (~6-10 KB). A save is refused if a pointer can't be described; header checks struct sizes and a per-game signature (demo/retail saves never mix). Music restarts from its beginning on load.
-* Storage: browser `localStorage` keys `mi.<ns>.slotN.meta|data` (ns = `demo`, `retail` or the `?data=` folder), via `EM_JS` in `main_wasm.c`; native test harness uses `./saves/`. Test: `SAVE_AT=<frame> LOAD_AT=<frame> ./mi_native ...`.
+* Storage: browser `localStorage` keys `mi.<ns>.slotN.meta|data` (ns = `demo` or `retail`), via `EM_JS` in `main_wasm.c`; native test harness uses `./saves/`. Test: `SAVE_AT=<frame> LOAD_AT=<frame> ./mi_native ...`.
 * Not saved: message text on screen, palette-cycle state, exact music position.
 
 ## Sound effects (AdLib FX sequencer, session 3)

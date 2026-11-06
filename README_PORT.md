@@ -2,7 +2,7 @@
 
 Play: open `web/dist/index.html` (self-contained, works from `file://`). Rebuild: `web/build.sh` (uses the system `emcc`).
 Native headless test: `cd engine && gcc -O1 -o mi_native main_native.c vm.c engine.c actor.c costume.c gfx.c res.c ui.c && ./mi_native ../mi_demo/ 1500 /tmp/f 100`
-Browser test: `node web/test/cdp.js <url?speed=20> <prefix> '<steps json>'`.
+Browser test: `node web/test/cdp.js <url> (then eval `window.__speed=20`) <prefix> '<steps json>'`.
 
 Layout: `RE_NOTES.md` (findings, addresses), `engine/` (portable C interpreter), `web/` (page + build), `work/` (unpacker, dumpers, Ghidra scripts, decompiles).
 
