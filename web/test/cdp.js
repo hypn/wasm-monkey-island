@@ -18,6 +18,7 @@ const [url, prefix, stepsJson] = process.argv.slice(2); const steps = JSON.parse
   for (const s of steps) {
     if (s.wait) await new Promise(r => setTimeout(r, s.wait));
     if (s.shot) { const d = await send('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(`${prefix}_${s.shot}.png`, Buffer.from(d.result.data, 'base64')); }
+    if (s.cdp) await send(s.cdp[0], s.cdp[1] || {});
     if (s.eval) { const d = await send('Runtime.evaluate', { expression: s.eval, returnByValue: true }); console.log(s.eval, '=>', JSON.stringify(d.result.result.value)); }
     if (s.click) {
       const r = (await send('Runtime.evaluate', { expression: 'JSON.stringify(document.getElementById("screen").getBoundingClientRect())', returnByValue: true })).result.result.value; const b = JSON.parse(r);

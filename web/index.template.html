@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Secret of Monkey Island Demo (WASM)</title>
 <style>
   :root { color-scheme: dark; --bg:#0b0b12; --fg:#e8e8f0; --accent:#6cf; }
@@ -18,12 +18,30 @@
   #menubtn:hover:not(:disabled) { background:#40c4ce; }
   #menubtn:disabled { opacity:.45; cursor:default; }
   #bar { display:flex; gap:12px; align-items:center; flex-wrap:wrap; justify-content:center; }
+  /* touch devices: the game fills the screen; buttons sit beside it (landscape) or under it (portrait); no hint text */
+  body.mobile { position:fixed; inset:0; width:100%; height:100dvh; overflow:hidden; gap:0; padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    touch-action:manipulation; overscroll-behavior:none; -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; -webkit-tap-highlight-color:transparent; }
+  body.mobile #wrap { width:100%; }
+  body.mobile canvas { border:0; }
+  body.mobile small, body.mobile .k { display:none; }
+  body.mobile #status:empty { display:none; }
+  body.mobile #bar { gap:10px; }
+  body.mobile #bar button { min-width:84px; min-height:44px; font-size:15px; white-space:nowrap; }
+  @media (orientation: portrait) { body.mobile { flex-direction:column; justify-content:flex-start; } body.mobile #wrap { margin-top:8px; } body.mobile #bar { margin-top:12px; } }
+  @media (orientation: landscape) {
+    body.mobile { flex-direction:row; justify-content:center; align-items:center; }
+    body.mobile #wrap { width:auto; height:100%; flex:0 1 auto; display:flex; align-items:center; }
+    body.mobile canvas { height:100%; width:auto; max-width:calc(100vw - 170px - env(safe-area-inset-left) - env(safe-area-inset-right)); aspect-ratio:320/200; object-fit:contain; }
+    body.mobile #status { position:fixed; left:8px; top:8px; }
+    body.mobile #bar { flex-direction:column; flex:0 0 auto; margin-left:12px; width:130px; }
+    body.mobile #bar button { width:100%; }
+  }
 </style>
 </head>
 <body>
 <div id="wrap"><canvas id="screen" width="320" height="200" tabindex="0"></canvas></div>
 <div id="status">Loading…</div>
-<div id="bar"><button id="escbtn" hidden title="Skip cutscene / cancel (Esc)">Esc</button><button id="menubtn" disabled title="Save / load (F5)">F5 &nbsp;Save / Load</button><small>ESC skips cutscenes. Saves go to browser storage. Music: the AdLib theme plays once you have clicked or pressed a key (browser autoplay rules).</small></div>
+<div id="bar"><button id="escbtn" hidden title="Skip cutscene / cancel (Esc)">Esc</button><button id="menubtn" disabled title="Save / load (F5)"><span class="k">F5 &nbsp;</span>Save / Load</button><small>ESC skips cutscenes. Saves go to browser storage. Music: the AdLib theme plays once you have clicked or pressed a key (browser autoplay rules).</small></div>
 <script>
 /*__DATA__*/
 </script>
@@ -32,6 +50,8 @@
 </script>
 <script>
 (async function () {
+  const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && matchMedia('(pointer: coarse)').matches);
+  document.body.classList.toggle('mobile', isMobile);
   const status = document.getElementById('status');
   const canvas = document.getElementById('screen');
   const ctx = canvas.getContext('2d');
@@ -106,7 +126,6 @@
     for (const ev of ['pointerup', 'touchend', 'click', 'mousedown', 'keydown']) window.addEventListener(ev, startAudio, { passive: true });
     document.addEventListener('visibilitychange', () => { if (!document.hidden && actx && actx.state !== 'running') actx.resume(); });
     // touch devices have no Esc key: show a button for it (skips cutscenes, cancels a chosen verb)
-    const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && matchMedia('(pointer: coarse)').matches);
     window.__isMobile = isMobile;
     const escBtn = document.getElementById('escbtn'); escBtn.hidden = !isMobile;
     escBtn.addEventListener('click', () => { mod._mi_key(27); startAudio(); escBtn.blur(); });
