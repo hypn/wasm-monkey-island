@@ -93,6 +93,12 @@ headless Chrome: real clicks/keys, screenshots, `?speed=N` to run N times faster
   followed actor's room. Without that the actor just vanished (room != current) and the scene never changed. Doors are state objects: `Open` first, then `Walk to`.
 * `loadRoomWithEgo` faces ego `objdir ^ 1` (handler 726e: `animate 0xF8 + (dir^1)`); `findObject` returns the **first** matching object in room order.
 
+* **ceae (start animation)** `FUN_1000_ceae(anim)`: `anim = frame*4+dir`; init frame resets all limbs; frames `0xF8..0xFB` only change direction; otherwise decode the anim and remember `cur_frame`;
+  if the direction changes every other active limb is re-decoded for it (`d12e`); finally `facing = anim & 3`. Costume set-up defers the init anim until the actor is shown (`b2e8`/`b1e8`).
+* **Walker**: moving flags 1 new-leg / 2 in-leg / 4 turn / 8 last-leg; speed vector from `b842` (zero deltas become 1, ratio clamped to `speedx`); step = `(delta>>8)*scale` in 16.16; facing target vertical when
+  `|dx| < 3|dy|`; one turn-table step per frame (`DS:0x892`); box flags &7 force a direction, &8/&0x10 and classes 19/18 flip it. Scale: box word, `0x8000|n` = room scale slot n, per-row table from `d430`.
+* Tables extracted from the EXE: `work/gen_tables.py` -> `engine/tables.h`.
+
 ## Open questions
 * Exit script of room 3 kills actors 1..9 (incl. ego); the original evidently keeps ego -> `eng_start_room` restores actors already assigned to the destination room.
 * Walking uses a straight line; the original is the box-matrix walker (`b600`, `cbb6`, `bd1c`, `b842`, `b9b2`) with scaling (`d430`, `SA` block).

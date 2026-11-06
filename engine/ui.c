@@ -39,13 +39,16 @@ static int cs_string_w(int cs, const u8 *s, int len)
 static void cs_draw_char(u8 *dst, int dst_w, int dst_h, int cs, int ch, int x, int y, int color)
 {
 	int w, h, xo, yo; const u8 *g = cs_glyph(cs, ch, &w, &h, &xo, &yo); if (!g) return;
+	const u8 *d = g_charset[cs]; int bpp = d[21] ? d[21] : 1;     /* header: 15-entry colour map, then bits per pixel */
 	x += xo; y += yo;
 	for (int r = 0; r < h; r++) for (int c = 0; c < w; c++) {
-		int bit = r * w + c;                      /* glyph bits are one continuous stream (no row padding) */
-		if (g[bit >> 3] & (0x80 >> (bit & 7))) {
-			int px = x + c, py = y + r;
-			if (px >= 0 && px < dst_w && py >= 0 && py < dst_h) dst[py * dst_w + px] = (u8)color;
-		}
+		int bit = (r * w + c) * bpp, v = 0;       /* glyph pixels are one continuous bit stream (no row padding) */
+		for (int k = 0; k < bpp; k++, bit++) v = (v << 1) | ((g[bit >> 3] >> (7 - (bit & 7))) & 1);
+		if (!v) continue;
+		/* f020: colour table [0x2860+v]: v==1 is the text colour, v>=2 comes from the charset's colour map (e.g. black outline) */
+		int col = v == 1 ? color : d[6 + v - 1];
+		int px = x + c, py = y + r;
+		if (px >= 0 && px < dst_w && py >= 0 && py < dst_h) dst[py * dst_w + px] = (u8)col;
 	}
 }
 
@@ -64,7 +67,7 @@ static void expand_codes(const u8 *in, int len, u8 *out, int *olen)
 		if (c == 0xFF) {
 			u8 code = in[++i];
 			if (code >= 4 && code <= 7) {
-				int var = g_vars[((s16)rd16(in + i + 1)) & 0x3FF]; i += 2;
+				extern int vm_read_var(u16); int var = vm_read_var(rd16(in + i + 1)); i += 2;
 				char tmp[16];
 				if (code == 4) { snprintf(tmp, sizeof tmp, "%d", var); for (char *p = tmp; *p; p++) out[o++] = (u8)*p; }
 				else if (code == 6) { const u8 *n = eng_obj_name(var); for (; *n && o < 500; n++) if (*n != '@') out[o++] = *n; }
@@ -131,6 +134,7 @@ void txt_print(int slot, int actor, const u8 *text, int len, int x, int y, int c
 {
 	(void)left; (void)have_pos;
 	u8 buf[512]; int n; expand_codes(text, len, buf, &n);
+	if (getenv("TRACE_TXT")) { fprintf(stderr, "raw[%d]:", len); for (int i = 0; i < len; i++) fprintf(stderr, " %02x", text[i]); fprintf(stderr, "\n"); }
 	int cs = g_charset_id;
 	if (slot == 0) {
 		if (msg_state == 0xFF || msg_state == 1) txt_clear();
@@ -138,18 +142,18 @@ void txt_print(int slot, int actor, const u8 *text, int len, int x, int y, int c
 		else if (actor < 13 && g_actors[actor].room == g_room) {
 			Actor *a = &g_actors[actor]; g_vars[VAR_TALK_ACTOR] = actor;
 			act_start_anim(actor, a->talk_start * 4 + a->facing);
-		} else g_vars[VAR_TALK_ACTOR] = 0xFF;
+		} else { g_vars[VAR_TALK_ACTOR] = 0xFF; if (actor < 13) return; }   /* 9a94: an actor that is not in this room says nothing */
 		int sx = x, sy = y;
 		if (overhead && actor < 13) {
 			Actor *a = &g_actors[actor];
 			sx = a->x - g_cam_cur + 160; if (sx < 80) sx = 80; if (sx > 240) sx = 240;
 			sy = a->y + a->elevation - 80; if (sy < 1) sy = 1; sy += g_view_top;
 		}
+		if (getenv("TRACE_TXT")) fprintf(stderr, "talk actor=%d x=%d y=%d col=%d overhead=%d center=%d len=%d '%s'\n", actor, x, y, color, overhead, center, n, buf);
 		memcpy(msg, buf, n + 1); msg_len = n; msg_pos = 0;
 		msg_x = sx; msg_y = sy; msg_color = color; msg_center = center; msg_actor = actor; msg_right = clip ? clip : 319;
 		msg_state = 0xFF; msg_timer = 0; g_vars[VAR_HAVE_MSG] = 0xFF;
-		if (actor < 13 && actor != 0xFF && g_actors[actor].talk_color && color == 0) {}
-		if (!color && actor < 13) msg_color = g_actors[actor].talk_color;
+		if (actor < 13) msg_color = g_actors[actor].talk_color;      /* 9a94: an actor speaks in its own talk colour (0x56ab[actor], actorOps 0x0e) whatever colour the print asked for; others use the slot default */
 		return;
 	}
 	if (g_trace || getenv("TRACE_TXT")) fprintf(stderr, "   txt_print slot=%d actor=%d x=%d y=%d col=%d '%s'\n", slot, actor, x, y, color, buf);
@@ -206,7 +210,7 @@ const u8 *eng_string_ptr(int s) { if (s < 0 || s >= NUM_STRINGS) return NULL; re
 int eng_get_string_len(int s) { if (s < 0 || s >= NUM_STRINGS) return 0; return cs_string_w(g_charset_id, g_strings[s], (int)strlen((char *)g_strings[s])); }
 
 /* ---------- verbs ---------- */
-typedef struct { u8 used, id, on, color, hicolor, dimcolor, key, center; s16 x, y; u8 name[128]; u16 image; u8 saveid; u8 back; s16 lx, lw; u8 lvalid; } VerbSlot;
+typedef struct { u8 used, id, on, color, hicolor, dimcolor, key, center; s16 x, y; u8 name[128]; u16 image; u8 saveid; u8 back; s16 lx, lw; u8 lvalid, charset; } VerbSlot;
 static VerbSlot verbs[NUM_VERBS + 1];
 static int find_verb(int id, int create)
 {
@@ -226,7 +230,7 @@ static void verb_text(const VerbSlot *v, u8 *out, int *n)
 static void verb_erase_rect(VerbSlot *v)
 {
 	u8 t[512]; int tn; verb_text(v, t, &tn);
-	int w = cs_string_w(g_charset_id, t, tn); int h = cs_height(g_charset_id);
+	int w = cs_string_w(v->charset, t, tn); int h = cs_height(v->charset);
 	int x = v->center ? v->x - w / 2 : v->x;
 	if (v->lvalid) { if (v->lx < x) { w += x - v->lx; x = v->lx; } if (v->lx + v->lw > x + w) w = v->lx + v->lw - x; }
 	for (int yy = v->y; yy < v->y + h && yy < SCREEN_H; yy++) for (int xx = x; xx < x + w && xx < SCREEN_W; xx++) if (xx >= 0 && yy >= 0) g_ui[yy * SCREEN_W + xx] = 0;
@@ -236,23 +240,23 @@ static void verb_erase_rect(VerbSlot *v);
 static void verb_draw(VerbSlot *v, int hover)
 {
 	if (!v->used || !v->on || v->saveid || !v->name[0]) return;
-	int color = v->on == 2 ? v->dimcolor : (hover ? v->hicolor : v->color);
+	int color = v->on == 2 ? v->dimcolor : ((hover && v->hicolor) ? v->hicolor : v->color);      /* ac82: hover colour only if one was set */
 	u8 t[512]; int tn; verb_text(v, t, &tn);
-	int w = cs_string_w(g_charset_id, t, tn);
+	int w = cs_string_w(v->charset, t, tn);
 	int x = v->center ? v->x - w / 2 : v->x;
 	verb_erase_rect(v);
 	v->lx = (s16)x; v->lw = (s16)w; v->lvalid = 1;
 	int px = x;
 	for (const u8 *p = t; *p; p++) {
 		if (*p == 0xFF) { p++; continue; }
-		cs_draw_char(g_ui, SCREEN_W, SCREEN_H, g_charset_id, *p, px, v->y, color); px += cs_char_w(g_charset_id, *p);
+		cs_draw_char(g_ui, SCREEN_W, SCREEN_H, v->charset, *p, px, v->y, color); px += cs_char_w(v->charset, *p);
 	}
 }
 void eng_verb_op(int verb, int sub, int a, int b, const u8 *text, int len, int color)
 {
 	(void)color; (void)len;
 	if (sub == 0xFF) return;
-	if (sub == 9) { int s = find_verb(verb, 1); if (!s) return; VerbSlot *v = &verbs[s]; memset(v, 0, sizeof *v); v->used = 1; v->id = verb; v->color = 2; v->dimcolor = 8; return; }
+	if (sub == 9) { int s = find_verb(verb, 1); if (!s) return; VerbSlot *v = &verbs[s]; memset(v, 0, sizeof *v); v->used = 1; v->id = verb; v->color = 2; v->dimcolor = 8; v->charset = (u8)g_charset_id; return; }   /* new verb takes the current charset (0x75f4) */
 	int s = find_verb(verb, 0); if (!s) return; VerbSlot *v = &verbs[s];
 	switch (sub) {
 	case 1: v->image = a; break;
@@ -287,12 +291,12 @@ void ui_save_restore_verbs(int sub, int start, int end, int mode)     /* handler
 		}
 	}
 }
-static int verb_at(int x, int y)
+static int verb_at(int x, int y)                         /* FUN_1000_adfa: highest slot first, enabled (not dimmed) verbs only */
 {
-	for (int i = 1; i < NUM_VERBS; i++) {
-		VerbSlot *v = &verbs[i]; if (!v->used || !v->on || v->saveid || !v->name[0]) continue;
+	for (int i = NUM_VERBS - 1; i >= 0; i--) {
+		VerbSlot *v = &verbs[i]; if (!v->used || v->on != 1 || v->saveid || !v->id || !v->name[0]) continue;
 		u8 t[512]; int tn; verb_text(v, t, &tn);
-		int w = cs_string_w(g_charset_id, t, tn); int h = cs_height(g_charset_id);
+		int w = cs_string_w(v->charset, t, tn); int h = cs_height(v->charset);
 		int vx = v->center ? v->x - w / 2 : v->x;
 		if (x >= vx && x < vx + w && y >= v->y && y < v->y + h) return v->id;
 	}
@@ -309,7 +313,7 @@ void ui_cursor_cmd(int sub, int a, int b, int c)
 	case 3: userput = 1; break; case 4: userput = 0; break;
 	case 5: cursor_on++; break; case 6: cursor_on--; break;
 	case 7: userput++; break; case 8: userput--; break;
-	case 12: if (a >= 0 && a < 10 && g_charset[a]) g_charset_id = a; break;
+	case 13: if (getenv("TRACE_CS")) fprintf(stderr, "charset %d (script %d room %d)\n", a, g_slots[g_cur_slot].number, g_room); if (a >= 0 && a < 10 && g_charset[a]) g_charset_id = a; break;
 	default: break;
 	}
 	g_vars[VAR_CURSORSTATE] = (s16)cursor_on; g_vars[VAR_USERPUT] = (s16)userput;
@@ -336,7 +340,7 @@ int ui_tick(void)
 		int k = pending_key; pending_key = 0;
 		if (k == g_vars[VAR_CUTSCENEEXIT_KEY] && g_vars[VAR_CUTSCENEEXIT_KEY]) { extern void vm_do_override(void); vm_do_override(); g_vars[VAR_OVERRIDE] = 1; txt_clear(); }
 		else if (k == '.' || k == g_vars[VAR_TALKSTOP_KEY]) ui_skip_msg();
-		else if (cursor_on > 0 || userput > 0) {
+		else if (userput > 0) {                                  /* a14e: input only while userput > 0 */
 			int v = 0; for (int i = 1; i < NUM_VERBS; i++) if (verbs[i].used && verbs[i].on == 1 && verbs[i].key == k) v = verbs[i].id;
 			if (v) run_verb_script(1, v, 1); else run_verb_script(4, k, 1);
 		}
@@ -344,7 +348,7 @@ int ui_tick(void)
 	if (pending_click) {
 		pending_click = 0;
 		int mode = click_btn == 2 ? 2 : 1;
-		if (cursor_on > 0 || userput > 0) {
+		if (userput > 0) {
 			int vx = click_x, vy = click_y;
 			if (vy < g_view_top || vy >= g_view_top + g_view_h) { int v = verb_at(vx, vy); run_verb_script(1, v, mode); }
 			else {

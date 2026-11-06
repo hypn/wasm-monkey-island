@@ -56,6 +56,12 @@ static s16 get_var(u16 idx)
 	if (idx >= NUM_VARS) { vm_error("var oob", idx); return 0; }
 	return g_vars[idx];
 }
+int vm_read_var(u16 idx)                      /* variable operand embedded in text (0xFF 4..7 <u16>): global / bit / local, no indexing */
+{
+	if (idx & 0x8000) { int b = idx & 0xFFF; return (g_bitvars[b >> 3] >> (b & 7)) & 1; }
+	if (idx & 0x4000) return g_slots[g_cur_slot].vars[idx & 0xFFF];
+	return idx < NUM_VARS ? g_vars[idx] : 0;
+}
 static void set_var_at(u16 pos, s16 v)
 {
 	{ static int tv = -2; if (tv == -2) tv = getenv("TRACE_VAR") ? atoi(getenv("TRACE_VAR")) : -1; if (tv >= 0 && pos == tv) fprintf(stderr, "   var[%d] <- %d (script %d)\n", pos, v, g_cur_slot < NUM_SLOTS ? g_slots[g_cur_slot].number : -1); }
@@ -305,6 +311,7 @@ static void op_load_room_with_ego(void)                           /* 726e: 0x24 
 {
 	int obj = var_or_word(0x80); int room = var_or_byte(0x40);
 	int x = fetch16(); int y = fetch16();
+	if (getenv("TRACE_DOOR")) fprintf(stderr, "loadRoomWithEgo obj=%d room=%d x=%d y=%d (from room %d)\n", obj, room, x, y, g_room);
 	eng_load_room_with_ego(obj, room, x, y);
 }
 static void op_get_owner(void)                                    /* 73bc: 0x10 */
@@ -439,7 +446,7 @@ static void op_do_sentence(void)                                  /* 7be4: 0x19 
 static void op_cutscene(void)                                     /* 7c8a: 0x40 */
 {
 	s16 args[16]; get_word_vararg(args);
-	g_slots[g_cur_slot].freeze_count++;
+	g_slots[g_cur_slot].cut_count++;                                   /* [0x67c0+slot], separate from the freeze count [0x6798] */
 	if (++cutscene_depth > 5) vm_error("cutscene stack overflow", 0);
 	cutscene_stack[cutscene_depth] = args[0];
 	g_cutscene_slot = g_cur_slot;
@@ -448,7 +455,7 @@ static void op_cutscene(void)                                     /* 7c8a: 0x40 
 }
 static void op_end_cutscene(void)                                 /* 7d0c: 0xc0 */
 {
-	g_slots[g_cur_slot].freeze_count--;
+	if (g_slots[g_cur_slot].cut_count) g_slots[g_cur_slot].cut_count--;
 	if (cutscene_depth > 0) cutscene_depth--;
 	override_slot = 0xff;
 	g_vars[VAR_OVERRIDE] = 0;
@@ -467,15 +474,15 @@ static void op_begin_override(void)                               /* 7d5c: 0x58 
 }
 static void op_set_camera_at(void)                                /* 7dac: 0x32 */
 {
-	int x = var_or_word(0x80); eng_set_camera_at(x);
+	int x = var_or_word(0x80); if (getenv("TRACE_CAM")) fprintf(stderr, "setCameraAt %d (script %d, room %d)\n", x, g_slots[g_cur_slot].number, g_room); eng_set_camera_at(x);
 }
 static void op_pan_camera(void)                                   /* 7dd0: 0x12 */
 {
-	int x = var_or_word(0x80); eng_pan_camera(x);
+	int x = var_or_word(0x80); if (getenv("TRACE_CAM")) fprintf(stderr, "panCamera %d (script %d, room %d)\n", x, g_slots[g_cur_slot].number, g_room); eng_pan_camera(x);
 }
 static void op_follow_actor(void)                                 /* 7dea: 0x52 */
 {
-	eng_follow_actor(var_or_byte(0x80));
+	{ int fa = var_or_byte(0x80); if (getenv("TRACE_CAM")) fprintf(stderr, "followActor %d (script %d, room %d)\n", fa, g_slots[g_cur_slot].number, g_room); eng_follow_actor(fa); }
 }
 static void op_freeze_scripts(void)                               /* 7ef0: 0x60 */
 {
@@ -640,7 +647,7 @@ static void op_actor_ops(void)                                    /* 8f9e: 0x13 
 		switch (sub) {
 		case 1: p[0] = var_or_byte(0x80); break;
 		case 2: case 3: p[0] = var_or_byte(0x80); break;
-		case 4: p[0] = var_or_word(0x80); p[1] = var_or_word(0x40); break;
+		case 4: p[0] = var_or_byte(0x80); p[1] = var_or_byte(0x40); break;               /* walk speed x,y: BYTES (8f9e), stored as words */
 		case 5: case 6: case 8: case 14: case 16: p[0] = var_or_byte(0x80); break;
 		case 7: p[0] = var_or_byte(0x80); p[1] = var_or_byte(0x40); break;
 		case 9: p[0] = var_or_byte(0x80); p[1] = var_or_byte(0x40); p[2] = var_or_byte(0x20); break;
@@ -648,7 +655,7 @@ static void op_actor_ops(void)                                    /* 8f9e: 0x13 
 		case 13: p[0] = var_or_byte(0x80); p[1] = var_or_byte(0x40); break;
 		case 15: { u8 c; do { c = fetch8(); if (tl < 62) tb[tl++] = c; } while (c); } break;
 		case 17: { s16 v[16]; for (int i = 0; i < 16; i++) v[i] = 0xff; int n = 0; s16 tmp[16]; (void)n; get_word_vararg(tmp); for (int i = 0; i < 16; i++) p[i] = tmp[i]; } break;
-		case 18: case 19: p[0] = var_or_word(0x80); break;
+		case 18: case 19: p[0] = var_or_byte(0x80); break;                               /* width / scale: BYTE operands (8f9e) */
 		default: break;
 		}
 		vm_actor_ops(a, sub, p, tb, tl);

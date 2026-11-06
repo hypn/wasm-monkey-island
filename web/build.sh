@@ -8,7 +8,7 @@ DEMO=../mi_demo2
 mkdir -p dist build
 emcc -O2 -DJS_CURSOR -sSINGLE_FILE=1 -sMODULARIZE=1 -sEXPORT_NAME=MI -sALLOW_MEMORY_GROWTH=1 \
   -sENVIRONMENT=web -sEXPORTED_RUNTIME_METHODS=HEAPU8 -sNO_EXIT_RUNTIME=1 \
-  $ENG/main_wasm.c $ENG/vm.c $ENG/engine.c $ENG/actor.c $ENG/costume.c $ENG/gfx.c $ENG/res.c $ENG/ui.c \
+  $ENG/main_wasm.c $ENG/vm.c $ENG/engine.c $ENG/actor.c $ENG/walk.c $ENG/costume.c $ENG/gfx.c $ENG/res.c $ENG/ui.c \
   -o build/mi.js
 python3 - <<PY
 import base64,json

@@ -4,8 +4,8 @@
 #include <stdlib.h>
 
 int g_room, g_room_w, g_room_h;
-u8 *g_roomimg; u8 *g_bg; u8 *g_mask;   /* g_mask: 1 = foreground pixel that hides actors */
-Box g_boxes[MAX_BOXES]; int g_nboxes; const u8 *g_box_matrix;
+u8 *g_roomimg; u8 *g_bg; u8 *g_mask; static u8 *g_roomplane;   /* g_mask: 1 = foreground pixel that hides actors */
+Box g_boxes[MAX_BOXES]; int g_nboxes; const u8 *g_box_matrix, *g_box_matrix_end;
 RoomObject g_objs[MAX_ROOM_OBJECTS]; int g_nobjs;
 s16 g_cam_cur = 160, g_cam_dest = 160, g_cam_follow;
 u16 g_inventory[NUM_INVENTORY];
@@ -57,32 +57,13 @@ const u8 *eng_obj_code(int obj, int where)
 }
 
 /* FUN_1000_60c4: verb entry point lookup. verbs table at OC+19: {verb u8, off u16}*, 0 terminated; 0xFF = default */
-int eng_find_verb_entry(int obj, int verb)
+int eng_find_verb_entry(int obj, int verb)            /* FUN_1000_60c4: first table entry for `verb` OR the 0xFF default, in table order */
 {
 	int where = eng_obj_where(obj); if (where == WIO_NOTFOUND) return 0;
 	const u8 *oc = eng_obj_code(obj, where); if (!oc) return 0;
-	const u8 *p = oc + 19;
-	for (;;) {
-		u8 v = *p; if (v == 0) return 0;
-		int off = rd16(p + 1);
-		if (v == verb || v == 0xFF) { if (v == verb) return off; }
-		p += 3;
-	}
+	for (const u8 *p = oc + 19; *p; p += 3) if (*p == verb || *p == 0xFF) return rd16(p + 1);
+	return 0;
 }
-static int find_verb_entry_default(int obj, int verb)
-{
-	int where = eng_obj_where(obj); if (where == WIO_NOTFOUND) return 0;
-	const u8 *oc = eng_obj_code(obj, where); if (!oc) return 0;
-	const u8 *p = oc + 19; int deflt = 0;
-	for (;;) {
-		u8 v = *p; if (v == 0) return deflt;
-		int off = rd16(p + 1);
-		if (v == verb) return off;
-		if (v == 0xFF) deflt = off;
-		p += 3;
-	}
-}
-int eng_find_verb_entry_def(int obj, int verb) { return find_verb_entry_default(obj, verb); }
 
 const u8 *eng_obj_name(int obj)
 {
@@ -98,14 +79,23 @@ void eng_set_object_name(int obj, const u8 *text, int len)
 	memcpy(g_obj_names_over[obj], text, len); g_obj_names_over[obj][len] = 0; g_obj_has_name_over[obj] = 1;
 }
 
-int eng_obj_xy(int obj, int *x, int *y)        /* FUN_1000_a4a6 / a458 */
+extern int walk_snap(int actor, int *x, int *y);
+int eng_obj_xy(int obj, int *x, int *y)        /* FUN_1000_a4a6 (+ a2e4): walk position of a room object, snapped into the walkboxes */
 {
-	if (obj < 0) return 0;
-	if (obj <= g_vars[VAR_NUM_ACTOR]) { *x = g_actors[obj].x; *y = g_actors[obj].y; return 1; }
+	if (obj <= g_vars[VAR_NUM_ACTOR]) { if (obj < 0) return 0; *x = g_actors[obj].x; *y = g_actors[obj].y; return 1; }
 	RoomObject *o = find_room_obj(obj);
-	if (!o) return 0;
-	*x = o->walk_x; *y = o->walk_y;
-	return 1;
+	if (!o || eng_obj_where(obj) != WIO_ROOM) return 0;
+	int px = o->walk_x, py = o->walk_y;
+	walk_snap(g_vars[VAR_EGO], &px, &py);
+	*x = px; *y = py; return 1;
+}
+int eng_obj_pos(int obj, int *x, int *y)       /* FUN_1000_a458: actors, room objects, or (for inventory items) the holder's position */
+{
+	if (obj <= g_vars[VAR_NUM_ACTOR]) return eng_obj_xy(obj, x, y);
+	int w = eng_obj_where(obj);
+	if (w == WIO_NOTFOUND) return 0;
+	if (w == WIO_INVENTORY) { int holder = g_obj_owner[obj] & 0xF; if (holder > g_vars[VAR_NUM_ACTOR]) return 0; *x = g_actors[holder].x; *y = g_actors[holder].y; return 1; }
+	return eng_obj_xy(obj, x, y);
 }
 int eng_obj_walk_dir(int obj) { RoomObject *o = find_room_obj(obj); return o ? o->actordir : 0; }
 
@@ -115,15 +105,28 @@ static void put_mask(int x, int y, u8 bits)
 	if (y < 0 || y >= g_room_h) return;
 	for (int b = 0; b < 8; b++) if ((bits & (0x80 >> b)) && x + b >= 0 && x + b < g_room_w) g_mask[y * g_room_w + x + b] = 1;
 }
+/* An object with a parent is only visible/clickable while the parent's state equals the stored parent state (bit 7 of OC byte +10). */
+static int parent_chain_ok(const RoomObject *o)
+{
+	const RoomObject *cur = o;
+	for (int guard = 0; guard <= g_nobjs; guard++) {
+		if (cur->parent == 0) return 1;
+		int pi = cur->parent - 1; if (pi < 0 || pi >= g_nobjs) return 0;
+		int ps = cur->parentstate, pstate = (eng_get_state(g_objs[pi].id) << 4) & 0xF0;
+		if (pstate != ps) return 0;
+		cur = &g_objs[pi];
+	}
+	return 1;
+}
 static void rebuild_bg(void)
 {
 	if (!g_roomimg) return;
 	memcpy(g_bg, g_roomimg, (size_t)g_room_w * g_room_h);
-	memset(g_mask, 0, (size_t)g_room_w * g_room_h);
+	if (g_roomplane) memcpy(g_mask, g_roomplane, (size_t)g_room_w * g_room_h); else memset(g_mask, 0, (size_t)g_room_w * g_room_h);
 	for (int i = 0; i < g_nobjs; i++) {
 		RoomObject *o = &g_objs[i];
 		int st = eng_get_state(o->id);
-		if (st <= 0 || !o->n_oi) continue;
+		if (st <= 0 || !o->n_oi || !parent_chain_ok(o)) continue;
 		int idx = st - 1; if (idx >= o->n_oi) idx = o->n_oi - 1;
 		const u8 *oi = o->oi[idx]; if (!oi) continue;
 		if (!o->w || !o->h) continue;
@@ -151,7 +154,10 @@ void eng_draw_object(int obj, int x, int y)    /* handler 7014 */
 	if (g_trace) fprintf(stderr, "   drawObject(%d,%d,%d) where=%d\n", obj, x, y, eng_obj_where(obj));
 	if (eng_obj_where(obj) != WIO_ROOM) return;
 	RoomObject *o = find_room_obj(obj);
-	if (x != 0xFF) { o->x = (s16)(x * 8); o->y = (s16)(y * 8); }
+	if (x != 0xFF) {
+		o->walk_x += (s16)((x * 8) - o->x); o->walk_y += (s16)((y * 8) - o->y);    /* 7014 moves the walk point with the object */
+		o->x = (s16)(x * 8); o->y = (s16)(y * 8);
+	}
 	/* objects occupying the same rectangle lose their drawn state */
 	for (int i = 0; i < g_nobjs; i++) {
 		RoomObject *p = &g_objs[i];
@@ -203,24 +209,25 @@ void eng_set_class(int obj, int cls, int on)
 	if (on) g_obj_class[obj] |= 1u << (cls - 1); else g_obj_class[obj] &= ~(1u << (cls - 1));
 }
 
-int eng_find_object(int x, int y)       /* FUN_1000_4196 (approx.: topmost clickable object under x,y) */
+int eng_find_object(int x, int y)       /* FUN_1000_4196: first object in room order whose 8x8 cell range contains the point */
 {
 	if (g_trace) fprintf(stderr, "   findObject(%d,%d)\n", x, y);
-	for (int i = 0; i < g_nobjs; i++) {                 /* first match in room order (ScummVM findObject) */
+	for (int i = 0; i < g_nobjs; i++) {
 		RoomObject *o = &g_objs[i];
-		if (!o->id) continue;
-		if (eng_get_class(o->id, 24)) continue;                 /* untouchable */
-		if (eng_get_state(o->id) <= 0 && !o->n_oi) {}
-		if (x >= o->x && x < o->x + (int)o->w && y >= o->y && y < o->y + (int)o->h) return o->id;
+		if (!o->id || eng_get_class(o->id, 24)) continue;               /* class 24 = untouchable */
+		if (!parent_chain_ok(o)) continue;
+		if (o->x / 8 <= (x >> 3) && (x >> 3) < o->x / 8 + (int)(o->w / 8) && o->y / 8 <= (y >> 3) && (y >> 3) < o->y / 8 + (int)(o->h / 8)) return o->id;
 	}
 	return 0;
 }
-int eng_dist(int a, int b)
+int eng_dist(int a, int b)              /* FUN_1000_678e: Chebyshev distance of the a458 positions; 0xFF if unknown */
 {
+	int na = g_vars[VAR_NUM_ACTOR];
+	if (a <= na && b <= na && a >= 0 && b >= 0 && g_actors[a].room == g_actors[b].room && g_actors[a].room != 0 && g_actors[a].room != g_room) return 0;
 	int ax, ay, bx, by;
-	if (!eng_obj_xy(a, &ax, &ay) || !eng_obj_xy(b, &bx, &by)) return 0xFF;
-	int dx = ax - bx; if (dx < 0) dx = -dx; int dy = ay - by; if (dy < 0) dy = -dy;
-	int d = dx + dy / 2; return d > 0xFE ? 0xFF : d;       /* FUN_1000_678e approximation */
+	if (!eng_obj_pos(a, &ax, &ay) || !eng_obj_pos(b, &bx, &by)) return 0xFF;
+	int dx = abs(ax - bx), dy = abs(ay - by);
+	return dx > dy ? dx : dy;
 }
 
 /* ---------- room loading ---------- */
@@ -230,10 +237,33 @@ void eng_load_room_data(int room)
 	const u8 *hd = res_room_block(room, "HD", 0, &sz);
 	g_room_w = rd16(hd + 6); g_room_h = rd16(hd + 8);
 	if (g_room_h > 144) g_room_h = 144;
-	free(g_roomimg); free(g_bg); free(g_mask);
+	free(g_roomimg); free(g_bg); free(g_mask); free(g_roomplane); g_roomplane = NULL;
 	g_roomimg = calloc((size_t)g_room_w * g_room_h, 1); g_bg = calloc((size_t)g_room_w * g_room_h, 1); g_mask = calloc((size_t)g_room_w * g_room_h, 1);
 	const u8 *bm = res_room_block(room, "BM", 0, &sz);
 	if (bm) gfx_draw_strips(g_roomimg, g_room_w, g_room_h, bm + 6, 0, g_room_w / 8, 0, g_room_h);
+	/* The BM payload is a chain of images, each starting with its own u16 size (FUN_1000_2e02 counts up to 4):
+	 * image 0 = background, image 1 = foreground mask plane (per strip: byte-per-row RLE, MSB = leftmost pixel). */
+	if (bm) {
+		const u8 *img0 = bm + 6; u32 s0 = rd16(img0);
+		if (s0 && 6 + s0 + 2 <= sz) {
+			const u8 *pl = img0 + s0; int ns = g_room_w / 8;
+			if (rd16(pl) > 2 * ns + 2) {
+				g_roomplane = calloc((size_t)g_room_w * g_room_h, 1);
+				for (int sI = 0; sI < ns; sI++) {
+					const u8 *p = pl + rd16(pl + 2 + 2 * sI); int row = 0;
+					while (row < g_room_h) {
+						u8 b = *p++, rep = (b & 0x80) != 0; int cnt = b & 0x7F, lit = 0; u8 c = 0;
+						if (rep) c = *p++;
+						for (; cnt > 0 && row < g_room_h; cnt--, row++) {
+							u8 bits = rep ? c : p[lit++];
+							for (int k = 0; k < 8; k++) if (bits & (0x80 >> k)) g_roomplane[row * g_room_w + sI * 8 + k] = 1;
+						}
+						if (!rep) p += lit;
+					}
+				}
+			}
+		}
+	}
 	/* boxes */
 	const u8 *bx = res_room_block(room, "BX", 0, &sz);
 	g_nboxes = 0; g_box_matrix = NULL;
@@ -246,7 +276,7 @@ void eng_load_room_data(int room)
 			b->lrx = (s16)rd16(p + 8); b->lry = (s16)rd16(p + 10); b->llx = (s16)rd16(p + 12); b->lly = (s16)rd16(p + 14);
 			b->mask = p[16]; b->flags = p[17]; b->scale = rd16(p + 18);
 		}
-		g_nboxes = n; g_box_matrix = p;
+		g_nboxes = n; g_box_matrix = p; g_box_matrix_end = bx + sz; walk_load_matrix();
 	}
 	/* objects */
 	g_nobjs = 0; memset(g_objs, 0, sizeof g_objs);
@@ -255,7 +285,7 @@ void eng_load_room_data(int room)
 		if (!oc || g_nobjs >= MAX_ROOM_OBJECTS) break;
 		RoomObject *o = &g_objs[g_nobjs++];
 		o->id = rd16(oc + 6); o->x = oc[9] * 8; o->y = (oc[10] & 0x7F) * 8; o->w = oc[11] * 8;
-		o->parent = oc[12]; o->walk_x = (s16)rd16(oc + 13); o->walk_y = (s16)rd16(oc + 15);
+		o->parent = oc[12]; o->parentstate = (oc[10] & 0x80) ? 0x10 : 0; o->walk_x = (s16)rd16(oc + 13); o->walk_y = (s16)rd16(oc + 15);
 		o->h = oc[17] & 0xF8; o->actordir = oc[17] & 7; o->oc = oc; o->oc_size = sz;
 	}
 	for (int n = 0;; n++) {
@@ -265,6 +295,12 @@ void eng_load_room_data(int room)
 		RoomObject *o = find_room_obj(id);
 		if (o && o->n_oi < 16) o->oi[o->n_oi++] = oi;
 	}
+	{ memset(g_scale_slots, 0, sizeof g_scale_slots);
+	  const u8 *sa = res_room_block(room, "SA", 0, &sz);          /* two slots of (s1, y1, s2, y2) words, read by FUN_1000_2c6c */
+	  if (sa) for (int i = 0; i < 2 && (u32)(6 + 8 * i + 8) <= sz; i++) {
+		g_scale_slots[i].s1 = rd16(sa + 6 + 8 * i); g_scale_slots[i].y1 = rd16(sa + 8 + 8 * i);
+		g_scale_slots[i].s2 = rd16(sa + 10 + 8 * i); g_scale_slots[i].y2 = rd16(sa + 12 + 8 * i);
+	  } }
 	g_exit_code = g_entry_code = NULL;
 	const u8 *ex = res_room_block(room, "EX", 0, &g_exit_size); if (ex) g_exit_code = ex + 6;
 	const u8 *en = res_room_block(room, "EN", 0, &g_entry_size); if (en) g_entry_code = en + 6;
@@ -332,12 +368,12 @@ void eng_load_room_with_ego(int obj, int room, int x, int y)    /* handler 726e 
 	if (eng_obj_where(obj) == WIO_NOTFOUND) { /* object not found: ego stays */ }
 	else if (eng_obj_xy(obj, &ox, &oy)) {
 		act_put(ego, ox, oy, g_room);
-		{ extern int eng_obj_walk_dir(int); int dir = (eng_obj_walk_dir(obj) ^ 1) & 3;      /* handler 726e: animate 0xF8 + (objdir ^ 1) */
-		  g_actors[ego].facing = g_actors[ego].new_facing = (u8)dir; act_start_anim(ego, g_actors[ego].stand_frame * 4 + dir); }
+		{ extern int eng_obj_walk_dir(int); act_set_facing(ego, (eng_obj_walk_dir(obj) ^ 1) & 3); }   /* 726e: animate 0xF8 + (dir^1): a real direction change, so every limb follows */
 		(void)new_dir_to_old;
 	}
 	g_vars[VAR_CAMERA_POS_X] = g_actors[ego].x;
 	eng_set_camera_at(g_actors[ego].x);
+	eng_follow_actor(ego);                                   /* 726e ends with FUN_1000_7e22(ego) */
 	if (x != -1) act_walk_to(ego, x, y);
 }
 
@@ -358,7 +394,7 @@ void eng_follow_actor(int a)
 {
 	g_cam_follow = a;
 	/* FUN_1000_7e3c: following an actor that is in another room switches to that room */
-	if (a && g_actors[a].room != g_room) { int r = g_actors[a].room; int ax = g_actors[a].x, ay = g_actors[a].y; eng_start_room(r); act_put(a, ax, ay, r); g_cam_cur = g_cam_dest = (s16)clamp_cam(ax); g_screen_dirty = 1; return; }
+	if (a && g_actors[a].room != g_room) { int r = g_actors[a].room; int ax = g_actors[a].x, ay = g_actors[a].y; eng_start_room(r); act_put(a, ax, ay, r); g_cam_cur = g_cam_dest = (s16)clamp_cam(ax); g_cam_follow = a; g_screen_dirty = 1; return; }   /* 7e3c re-sets follow mode (4db1=2) AFTER 2a6e, which resets it to 3 */
 	if (a && cam_outside_window(g_actors[a].x)) { g_cam_cur = g_cam_dest = (s16)clamp_cam(g_actors[a].x); }
 	g_screen_dirty = 1;
 }
@@ -421,18 +457,17 @@ void eng_room_ops(int sub, int a, int b, int c, int d, int e)
 	case 3: { extern void ui_set_screen(int, int); ui_set_screen(a, b); break; }
 	case 4: break;
 	case 5: case 6: break;                               /* shake */
+	case 7: { int sl = e - 1; if (sl >= 0 && sl < 20) { g_scale_slots[sl].y1 = b; g_scale_slots[sl].s1 = a; g_scale_slots[sl].y2 = d; g_scale_slots[sl].s2 = c; } break; }
 	default: break;
 	}
 }
 int eng_string_get_char(int s, int i);
-int eng_actor_from_pos(int x, int y)
+int eng_actor_from_pos(int x, int y)          /* FUN_1000_413a: first actor whose last drawn bounds contain the point (room coords) */
 {
 	for (int a = 1; a < 13; a++) {
 		Actor *ac = &g_actors[a];
-		if (!ac->visible || ac->room != g_room) continue;
-		if (eng_get_class(a, 24)) continue;
-		int w = ac->width ? ac->width : 24;
-		if (x >= ac->x - w / 2 && x <= ac->x + w / 2 && y >= ac->y - 64 && y <= ac->y) return a;
+		if (!ac->visible || ac->room != g_room || !ac->hvalid || eng_get_class(a, 24)) continue;
+		if (x >= ac->hx1 && x <= ac->hx2 && y >= ac->hy1 && y <= ac->hy2) return a;
 	}
 	return 0;
 }

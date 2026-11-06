@@ -12,7 +12,7 @@ typedef struct {
 	const u8 *base;     /* code base; pc is an offset from here */
 	u32 pc;             /* saved pc */
 	s32 delay;
-	u8 freeze_resistant, recursive, freeze_count, cutscene_override, ran_this_frame;
+	u8 freeze_resistant, recursive, freeze_count, cut_count, cutscene_override, ran_this_frame;
 	s16 vars[NUM_LOCALVARS];
 } Slot;
 
@@ -32,6 +32,7 @@ typedef struct {
 } RoomObject;
 
 /* ---------------- actors ---------------- */
+typedef struct { int dest_x, dest_y, destbox, destdir, curbox; int start_x, start_y, wp_x, wp_y; int xfrac, yfrac, dxf, dyf; } WalkData;
 typedef struct {
 	u8 used;
 	u8 room, costume, facing, new_facing;
@@ -53,7 +54,8 @@ typedef struct {
 	u8 cost_loaded;
 	u8 needs_redraw;
 	u8 cost_anim; /* current anim frame index */
-	s8 dest_dir;  /* facing to take on arrival (-1 = keep) */
+	s8 dest_dir;  /* unused (kept for layout) */
+	WalkData wd; int cur_frame; u8 pending_init; s16 hx1, hx2, hy1, hy2; u8 hvalid;   /* bounds of the last drawn costume (room coords) */ int last_valid_x, last_valid_y; u8 scalex, scaley;
 } Actor;
 
 typedef struct { s16 ulx, uly, urx, ury, lrx, lry, llx, lly; u8 mask, flags; u16 scale; } Box;
@@ -73,7 +75,7 @@ extern Actor g_actors[16];
 extern RoomObject g_objs[MAX_ROOM_OBJECTS]; extern int g_nobjs;
 extern int g_room, g_room_w, g_room_h;
 extern u8 *g_roomimg;
-extern Box g_boxes[MAX_BOXES]; extern int g_nboxes; extern const u8 *g_box_matrix;
+extern Box g_boxes[MAX_BOXES]; extern int g_nboxes; extern const u8 *g_box_matrix, *g_box_matrix_end;
 extern s16 g_cam_cur, g_cam_dest; extern s16 g_cam_follow;
 extern u8 g_inv_obj_data[NUM_INVENTORY][64];
 extern u16 g_inventory[NUM_INVENTORY];
@@ -92,6 +94,8 @@ extern int g_halted;
 /* engine services implemented in engine.c */
 void eng_start_room(int room);
 int  eng_obj_xy(int obj, int *x, int *y);
+int  eng_obj_pos(int obj, int *x, int *y);
+void act_init_ex(int a, int full);
 int  eng_obj_where(int obj);
 int  eng_obj_index(int obj);
 const u8 *eng_obj_code(int obj, int where);
@@ -132,6 +136,10 @@ void eng_string_op(int sub, int a, int b, int c, const u8 *text);
 int  eng_get_string_len(int s);
 void eng_resource_misc(void);
 
+/* room scale slots (FUN_1000_d430): scale = (s2-s1)*(y-y1)/(y2-y1)+s1 */
+typedef struct { int y1, s1, y2, s2; } ScaleSlot;
+extern ScaleSlot g_scale_slots[20];
+
 /* actors */
 void act_init(int a);
 void act_put(int a, int x, int y, int room);
@@ -145,6 +153,9 @@ void act_animate(int a, int anim);
 int  act_moving(int a);
 void act_stop_walk(int a);
 void act_update_all(void);
+int walk_in_box(int n, int x, int y); int walk_snap(int actor, int *x, int *y); void walk_start(int ai, int x, int y, int dir);
+void walk_actor(int ai); void walk_place(int ai); void walk_setup_scale(Actor *a); void walk_load_matrix(void);
+void act_turn_to(int ai, int dir); void act_set_facing(int ai, int dir); void act_start_frame(int ai, int frame);
 void act_put_at_object(int a, int obj);
 int  act_in_box(int a, int box);
 int  act_box_of(int x, int y);
