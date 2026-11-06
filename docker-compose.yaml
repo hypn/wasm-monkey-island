@@ -1,0 +1,7 @@
+services:
+  monkey-island-demo:
+    build: .
+    image: mi-demo
+    ports:
+      - "8080:80"        # http://localhost:8080
+    restart: unless-stopped

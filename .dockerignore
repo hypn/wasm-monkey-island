@@ -1,0 +1,8 @@
+.git
+scummvm
+work
+web/build
+web/dist
+engine/mi_native
+engine/mi_asan
+*.md
