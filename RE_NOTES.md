@@ -1,6 +1,6 @@
 # Monkey Island demo (MIDEMO) — reverse-engineering notes
 
-Target: `mi_demo2/` — "The Secret of Monkey Island" contest demo (1991), DOS, EGA/VGA.
+Target: `mi_demo/` — "The Secret of Monkey Island" contest demo (1991), DOS, EGA/VGA.
 Tools: own Python scripts (`work/*.py`), REA (Ghidra 12.1.4 provider) on the unpacked EXE,
 Ghidra headless (`work/gh/scripts/MkFuncs.java`) to create/decompile functions that Ghidra's
 auto-analysis missed (they are only reachable through a far-pointer table).
@@ -63,7 +63,7 @@ Set bits are foreground that hides actors standing in a walkbox whose `mask` byt
 This is why Guybrush must walk behind the bar tables and pirates (which are objects, not actors).
 
 ## Verification oracle (dynamic analysis of the original)
-`work/oracle/run.sh <n>` copies `mi_demo2`, starts `dosbox-x` under `xvfb-run` (`machine=vgaonly`, `midemo e k`), and takes `import -window root` screenshots
+`work/oracle/run.sh <n>` copies `mi_demo`, starts `dosbox-x` under `xvfb-run` (`machine=vgaonly`, `midemo e k`), and takes `import -window root` screenshots
 (~2.3 s apart). The emulated 320x200 screen sits at (192,201) in the 1024x768 capture at 2x. `work/oracle/*` helper snippets (python/numpy) downsample a shot and
 compare against my engine frames:
 * palette check: for the headshot scene my 16-colour render is identical to the original (only text timing differed, 99.2% pixel match);

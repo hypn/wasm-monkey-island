@@ -1,6 +1,6 @@
 # Builds the WebAssembly game into one self-contained index.html and serves it with nginx.
 #   docker build -t mi-demo .   &&   docker run --rm -p 8080:80 mi-demo   ->  http://localhost:8080
-# Needs the demo's data files in ./mi_demo2 (DISK01.LEC, 000.LFL, 901/902/904.LFL); they are embedded into the page.
+# Needs the demo's data files in ./mi_demo (DISK01.LEC, 000.LFL, 901/902/904.LFL); they are embedded into the page.
 
 FROM debian:trixie-slim AS build
 RUN apt-get update \
@@ -10,7 +10,7 @@ ENV EM_CACHE=/tmp/emscripten-cache
 WORKDIR /src
 COPY engine ./engine
 COPY web ./web
-COPY mi_demo2 ./mi_demo2
+COPY mi_demo ./mi_demo
 RUN cd web && ./build.sh
 
 FROM nginx:alpine
