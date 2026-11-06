@@ -85,6 +85,14 @@ EM_JS(void, js_timestamp, (char *out, int max), {
 	const d = new Date(), p = (n) => String(n).padStart(2, "0"), t = d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
 	for (let i = 0; i < t.length && i < max - 1; i++) HEAPU8[out + i] = t.charCodeAt(i); HEAPU8[out + Math.min(t.length, max - 1)] = 0;
 });
+EM_JS(int, js_prompt_name, (const char *cur, char *out, int max), {
+	if (!window.__isMobile) return -1;
+	let c = "", i = 0, k; while ((k = HEAPU8[cur + i++])) c += String.fromCharCode(k);
+	const r = window.prompt("Name for this saved game:", c); if (r === null) return 0;
+	const b = r.replace(/[^ -~]/g, " ").split("|").join(" ").slice(0, 24); const n = Math.min(b.length, max - 1);
+	for (let j = 0; j < n; j++) HEAPU8[out + j] = b.charCodeAt(j); HEAPU8[out + n] = 0; return 1;
+});
+int plat_prompt_name(const char *cur, char *out, int max) { return js_prompt_name(cur, out, max); }
 int plat_save_put(int slot, const char *meta, const u8 *data, u32 len) { return js_save_put(slot, meta, data, (int)len); }
 int plat_save_meta(int slot, char *out, int max) { return js_save_meta(slot, out, max); }
 int plat_save_get(int slot, u8 *out, u32 max) { return js_save_get(slot, out, (int)max); }

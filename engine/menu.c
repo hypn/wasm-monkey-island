@@ -29,6 +29,7 @@ enum { C_BLACK = 1, C_PANEL, C_PANEL2, C_BORDER, C_BORDER2, C_WHITE, C_GREY, C_Y
 #define LW 180
 #define ROWH 13
 static const struct { const char *label; int y; } btn[3] = { { "Save", 44 }, { "Load", 74 }, { "Resume", 104 } };
+extern int plat_prompt_name(const char *cur, char *out, int max);    /* touch devices have no keyboard for the canvas: ask the browser */
 #define BX 218
 #define BW 72
 #define BH 22
@@ -85,7 +86,12 @@ void menu_click(int x, int y, int button)
 	if (button == 2) { if (editing) editing = 0; else close_menu(); return; }          /* right click = back */
 	int s = in_slot(x, y), b = in_btn(x, y);
 	if (s >= 0) { sel = s; editing = 0; return; }
+	if (editing && b == 0) { editing = 0; do_save(); return; }                          /* Okay */
+	if (editing && b == 1) { editing = 0; return; }                                      /* Cancel */
 	if (b == 0) {                                                                       /* Save: ask for a name */
+		{ char cur[28], out[28]; snprintf(cur, sizeof cur, "%s", slots[sel].used ? slots[sel].name : (g_room_names[g_room & 255][0] ? g_room_names[g_room & 255] : "Saved game"));
+		  int r = plat_prompt_name(cur, out, sizeof out);
+		  if (r == 1) { snprintf(editbuf, sizeof editbuf, "%s", out); do_save(); return; } if (r == 0) return; }
 		editing = 1; fresh = 1; snprintf(editbuf, sizeof editbuf, "%s", slots[sel].used ? slots[sel].name : (g_room_names[g_room & 255][0] ? g_room_names[g_room & 255] : "Saved game"));
 		if (editbuf[0] >= 'a' && editbuf[0] <= 'z') editbuf[0] -= 32;
 	} else if (b == 1) { editing = 0; do_load(); }
@@ -148,13 +154,13 @@ void menu_draw(u32 *rgb)
 	/* buttons */
 	for (int i = 0; i < 3; i++) {
 		int y = btn[i].y, down = hover_btn == i && (g_mouse_buttons & 1), c = down ? C_BTNDN : hover_btn == i ? C_BTNHI : C_BTN;
-		int dis = (i == 1 && !slots[sel].used);
+		int dis = (i == 1 && !editing && !slots[sel].used);
 		rect(BX, y, BW, BH, dis ? C_SLOT : c); if (!dis) rect(BX + 2, y + 1, BW - 4, 1, C_BORDER);
 		frame(BX, y, BW, BH, dis ? C_BORDER2 : C_BORDER2); round_corners(BX, y, BW, BH);
-		ctext(btn[i].label, 2, BX + BW / 2, y + 7, dis ? C_GREY : C_WHITE);
+		ctext(editing && i == 0 ? "Okay" : editing && i == 1 ? "Cancel" : btn[i].label, 2, BX + BW / 2, y + 7, dis ? C_GREY : C_WHITE);
 	}
 	/* status / hint line */
 	if (status_t > 0) ui_text(L, 1, status, LX, 176, C_GREEN, C_BLACK);
-	else ui_text(L, 1, editing ? "Type a name, Enter = save, Esc = cancel" : "F5, Esc or right click: back to the game", LX, 176, C_GREY, C_BLACK);
+	else ui_text(L, 1, editing ? "Type a name, then Okay (or Enter)" : "F5, Esc or right click: back to the game", LX, 176, C_GREY, C_BLACK);
 	for (int i = 0; i < SCREEN_W * SCREEN_H; i++) if (L[i]) { const u8 *c = P[L[i]]; rgb[i] = 0xFF000000u | (c[0] << 16) | (c[1] << 8) | c[2]; }
 }

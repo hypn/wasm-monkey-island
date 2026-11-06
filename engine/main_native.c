@@ -83,3 +83,4 @@ int plat_save_meta(int slot, char *out, int max)
 int plat_save_get(int slot, u8 *out, u32 max)
 { char p[64]; spath(p, sizeof p, slot, "sav"); FILE *f = fopen(p, "rb"); if (!f) return -1; int n = (int)fread(out, 1, max, f); fclose(f); return n; }
 void plat_timestamp(char *out, int max) { time_t t = time(NULL); strftime(out, max, "%Y-%m-%d %H:%M", localtime(&t)); }
+int plat_prompt_name(const char *cur, char *out, int max) { (void)cur; (void)out; (void)max; return -1; }

@@ -13,6 +13,8 @@
   #status { min-height:1.4em; color:#9ab; }
   small { color:#789; }
   #menubtn { font:inherit; font-weight:700; color:#fff; background:#1e8e98; border:1px solid #3ac; border-radius:8px; padding:4px 14px; cursor:pointer; }
+  #escbtn { font:inherit; font-weight:700; color:#fff; background:#7a3a8e; border:1px solid #b6c; border-radius:8px; padding:4px 14px; cursor:pointer; }
+  #escbtn:active { background:#a455c0; }
   #menubtn:hover:not(:disabled) { background:#40c4ce; }
   #menubtn:disabled { opacity:.45; cursor:default; }
   #bar { display:flex; gap:12px; align-items:center; flex-wrap:wrap; justify-content:center; }
@@ -21,7 +23,7 @@
 <body>
 <div id="wrap"><canvas id="screen" width="320" height="200" tabindex="0"></canvas></div>
 <div id="status">Loading…</div>
-<div id="bar"><button id="menubtn" disabled title="Save / load (F5)">F5 &nbsp;Save / Load</button><small>ESC skips cutscenes. Saves go to browser storage. Music: the AdLib theme plays once you have clicked or pressed a key (browser autoplay rules).</small></div>
+<div id="bar"><button id="escbtn" hidden title="Skip cutscene / cancel (Esc)">Esc</button><button id="menubtn" disabled title="Save / load (F5)">F5 &nbsp;Save / Load</button><small>ESC skips cutscenes. Saves go to browser storage. Music: the AdLib theme plays once you have clicked or pressed a key (browser autoplay rules).</small></div>
 <script>
 /*__DATA__*/
 </script>
@@ -79,20 +81,37 @@
       if (k !== undefined) { mod._mi_key(k); e.preventDefault(); }
     });
     // audio: the engine synthesises AdLib (OPL2) into a ring buffer; this callback just drains it
-    let actx = null;
+    let actx = null, audioReady = false;
     function startAudio() {
-      if (actx) { if (actx.state === 'suspended') actx.resume(); return; }
+      // iOS Safari only unlocks Web Audio from a "real" gesture end (touchend / click / pointerup / keydown) and needs the
+      // context resumed (and a sound played) inside it; touchstart/mousedown do not count. The mute switch also silences
+      // Web Audio unless the page asks for "playback" audio.
+      try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
       try {
-        const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
-        actx = new AC(); const N = 2048, node = actx.createScriptProcessor(N, 0, 1);
-        const p = mod._mi_alloc(N * 4);
-        node.onaudioprocess = (e) => { const out = e.outputBuffer.getChannelData(0); mod._mi_snd_pull(p, N, actx.sampleRate); out.set(mod.HEAPF32.subarray(p >> 2, (p >> 2) + N)); };
-        node.connect(actx.destination); if (actx.state === 'suspended') actx.resume();
+        if (!actx) {
+          const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+          actx = new AC(); const N = 4096, node = actx.createScriptProcessor(N, 1, 1);
+          const p = mod._mi_alloc(N * 4);
+          node.onaudioprocess = (e) => { const out = e.outputBuffer.getChannelData(0); mod._mi_snd_pull(p, N, actx.sampleRate); out.set(mod.HEAPF32.subarray(p >> 2, (p >> 2) + N)); };
+          const mute = actx.createGain(); mute.gain.value = 1;      // keep the processor pulled by a graph that reaches the output
+          node.connect(mute); mute.connect(actx.destination);
+        }
+        if (actx.state !== 'running') actx.resume();
+        if (!audioReady) {                                           // unlock: play one silent sample inside the gesture
+          const b = actx.createBuffer(1, 1, 22050), s = actx.createBufferSource(); s.buffer = b; s.connect(actx.destination); s.start(0);
+          audioReady = true;
+        }
       } catch (e) { console.warn('audio unavailable', e); }
     }
-    for (const ev of ['mousedown', 'keydown', 'touchstart']) window.addEventListener(ev, startAudio);
+    for (const ev of ['pointerup', 'touchend', 'click', 'mousedown', 'keydown']) window.addEventListener(ev, startAudio, { passive: true });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden && actx && actx.state !== 'running') actx.resume(); });
+    // touch devices have no Esc key: show a button for it (skips cutscenes, cancels a chosen verb)
+    const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && matchMedia('(pointer: coarse)').matches);
+    window.__isMobile = isMobile;
+    const escBtn = document.getElementById('escbtn'); escBtn.hidden = !isMobile;
+    escBtn.addEventListener('click', () => { mod._mi_key(27); startAudio(); escBtn.blur(); });
     const menuBtn = document.getElementById('menubtn');
-    menuBtn.addEventListener('click', () => { if (!menuBtn.disabled) { mod._mi_key(319); startAudio(); } menuBtn.blur(); canvas.focus(); });
+    menuBtn.addEventListener('click', () => { if (!menuBtn.disabled) { mod._mi_key(319); } menuBtn.blur(); canvas.focus(); });
     window.__mi = mod; window.__frames = 0;
     let last = performance.now(), acc = 0; window.__speed = 1;   // test hook (set from the console / test driver), not a URL option
     function tick(now) {

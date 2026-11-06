@@ -388,7 +388,13 @@ int snd_pull(float *dst, int n, double out_rate)
 	/* keep the audio close to the game: the ring may hold up to ~1.3 s (it keeps filling while the browser's audio is not
 	 * running yet, e.g. before the first click, and the game clock can briefly run ahead). Without this the backlog would
 	 * become a permanent delay, so music would start and stop noticeably late after scene changes. */
-	{ unsigned max_lag = OPL_RATE * 15 / 100; if (wr_pos - rd_pos > max_lag) rd_pos = wr_pos - max_lag; }
+	{ unsigned max_lag = OPL_RATE * 30 / 100; if (wr_pos - rd_pos > max_lag) rd_pos = wr_pos - max_lag; }
+	/* pre-buffering: if the game thread is late (slow phone) the ring runs dry; instead of playing a crackly partial block
+	 * wait until ~120 ms are queued again, so a hiccup is one short gap rather than stuttering */
+	{ static int buffering = 1; unsigned need = (unsigned)(n * (OPL_RATE / out_rate)) + 4, avail = wr_pos - rd_pos;
+	  if (avail < need) buffering = 1;
+	  if (buffering && avail < OPL_RATE * 12 / 100 + need) { for (int i = 0; i < n; i++) dst[i] = 0; return 0; }
+	  buffering = 0; }
 	for (int i = 0; i < n; i++) {
 		if ((int)(wr_pos - rd_pos) < 2) { for (; i < n; i++) dst[i] = 0; return 0; }
 		float a = ring[rd_pos & (RING - 1)] / 32768.0f, b = ring[(rd_pos + 1) & (RING - 1)] / 32768.0f;

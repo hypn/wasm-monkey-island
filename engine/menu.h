@@ -14,4 +14,5 @@ int  plat_save_put(int slot, const char *meta, const u8 *data, u32 len);     /* 
 int  plat_save_meta(int slot, char *out, int max);                             /* length, or <0 if empty */
 int  plat_save_get(int slot, u8 *out, u32 max);                                /* length, or <0 */
 void plat_timestamp(char *out, int max);
+int  plat_prompt_name(const char *cur, char *out, int max);                    /* 1 = name entered, 0 = cancelled, -1 = not supported (use the in-game text field) */
 #endif
