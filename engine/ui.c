@@ -95,6 +95,13 @@ static void expand_codes(const u8 *in, int len, u8 *out, int *olen)
 	out[o] = 0; *olen = o;
 }
 
+/* Room change (ScummVM startScene -> stopTalk + a fresh virtual screen): drop the message state and any text baked into the
+ * old screen with print slots 1..3 (the map's dance instructions etc.). Text in the verb/UI rows (g_ui) is not touched. */
+void ui_room_start(void)
+{
+	memset(g_txt, 0xFF, sizeof g_txt);
+	msg_state = 0; msg_timer = 0; msg_keep = 0; g_vars[VAR_HAVE_MSG] = 0; g_vars[VAR_TALK_ACTOR] = 0;
+}
 void txt_clear(void)
 {
 	if (msg_state || msg_timer) {

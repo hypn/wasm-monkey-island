@@ -346,6 +346,7 @@ void eng_kill_local_scripts(void)
 void eng_start_room(int room)           /* FUN_1000_2a6e */
 {
 	if (getenv("TRACE_ROOM")) fprintf(stderr, "start_room %d (ticks=%d)\n", room, g_vars[VAR_TIMER_TOTAL]);
+	{ extern void ui_room_start(void); ui_room_start(); }       /* startScene: stopTalk() first, and the old screen's text is gone */
 	/* DEVIATION (unresolved): the logo room's exit script parks actors 1..9 in room 0, which would also remove
 	 * ego that script 1 has just placed in the destination room; the original evidently keeps ego, so actors
 	 * already assigned to the destination room are restored after the exit scripts ran. */

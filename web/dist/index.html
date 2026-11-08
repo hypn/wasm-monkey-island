@@ -166,7 +166,7 @@ else if (typeof define === 'function' && define['amd'])
       const d = JSON.parse(new TextDecoder().decode(h.subarray(p, e)));
       const sp = mod._mi_debug_save(), sn = mod._mi_debug_save_len();
       d.save_b64 = sp ? dbgB64(sp, sn) : null;
-      d.client = { url: location.href, ua: navigator.userAgent, viewport: [innerWidth, innerHeight], dpr: devicePixelRatio, frames: window.__frames, time: new Date().toISOString() };
+      d.client = { build: '2026-11-08 16:19:18', url: location.href, ua: navigator.userAgent, viewport: [innerWidth, innerHeight], dpr: devicePixelRatio, frames: window.__frames, time: new Date().toISOString() };
       return d;
     }
     function showDebug() {
@@ -179,7 +179,7 @@ else if (typeof define === 'function' && define['amd'])
         'inventory: ' + (d.inventory.map(i => i.name + '#' + i.id).join(', ') || 'empty'),
         'objects here: ' + (d.objects.map(o => (o.name || '?') + '#' + o.id + (o.state ? ' s' + o.state : '')).join(', ') || 'none'),
         'vars set: ' + Object.keys(d.vars).length + '  flags set: ' + d.bits_set.length + '  save data: ' + (d.save_b64 ? d.save_b64.length + ' chars' : 'n/a'),
-        'page ' + d.client.url].join('\n');
+        'build ' + d.client.build + '  page ' + d.client.url].join('\n');
       document.getElementById('dbgsum').textContent = sum;
       document.getElementById('dbgjson').textContent = JSON.stringify(d, null, 1);
       if (!dbg.open) dbg.showModal();

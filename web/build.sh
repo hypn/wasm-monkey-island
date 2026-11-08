@@ -17,6 +17,8 @@ d='$DEMO/'
 data={'lec':b(d+'DISK01.LEC'),'idx':b(d+'000.LFL'),'charsets':{'1':b(d+'901.LFL'),'2':b(d+'902.LFL'),'4':b(d+'904.LFL')}}
 t=open('index.template.html').read()
 t=t.replace('/*__DATA__*/','const MI_DATA='+json.dumps(data)+';')
+import datetime
+t=t.replace('__BUILD__',datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
 t=t.replace('/*__MI_JS__*/',open('build/mi.js').read())
 open('dist/index.html','w').write(t)
 print('wrote dist/index.html',len(t),'bytes')
