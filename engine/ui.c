@@ -105,7 +105,6 @@ static void expand_codes(const u8 *in, int len, u8 *out, int *olen)
 		}
 		if (c == '@') continue;
 		if (c == 0) break;
-		if (c == '\r' || c == '\n') { out[o++] = 0xFF; out[o++] = 1; continue; }   /* literal CR/LF are line breaks too (ScummVM charset: chr == '\n' / '\r' / 13) */
 		out[o++] = c;
 	}
 	out[o] = 0; *olen = o;
@@ -152,7 +151,8 @@ static void draw_lines(u8 *dst, int dst_h, const u8 *s, int x, int y, int color,
 		while (*q) {
 			if (*q == 0xFF) {
 				u8 c = q[1];
-				if (c == 1 || c == 8 || c == 3 || c == 2) { q += 2; break; }
+				if (c == 1 || c == 8) { q += 2; break; }       /* new line; FF 02/03 are not line breaks in printed text (ScummVM drawString ignores them; spoken text strips them earlier) */
+				if (c == 2 || c == 3) { q += 2; continue; }
 				if (c == 12 && q[2] && q[3]) { if (ll + 4 < (int)sizeof line) { memcpy(line + ll, q, 4); ll += 4; } q += 4; continue; }   /* colour change: zero width */
 				q += 2; continue;
 			}
@@ -225,6 +225,7 @@ void txt_update(void)                        /* FUN_1000_9b64 */
 		u8 stripped[512]; int sl = 0, i = 0; int keep_after = 0; int wait_after = 0;
 		for (i = 0; i < msg_len; i++) {
 			if (msg[i] == 0xFF) { u8 c = msg[++i]; if (c == 3) { wait_after = 1; break; } if (c == 2) { keep_after = 1; break; } if (c == 1 || c == 8) { stripped[sl++] = 0xFF; stripped[sl++] = 1; if (c == 8) while (i + 1 < msg_len && msg[i + 1] == ' ') i++; /* addLinebreaks: in spoken text the spaces after FF 08 are dropped (verb lines keep them as indent) */ } else if (c == 12) { stripped[sl++] = 0xFF; stripped[sl++] = 12; stripped[sl++] = msg[i + 1]; stripped[sl++] = msg[i + 2]; i += 2; } continue; }
+			if (msg[i] == 0x0D) { stripped[sl++] = 0xFF; stripped[sl++] = 1; continue; }   /* spoken text only (handleNextCharsetCode: c == 13 = new line); in verb texts 0x0A/0x0D are glyphs (the inventory arrows) */
 			stripped[sl++] = msg[i];
 		}
 		stripped[sl] = 0;
@@ -263,6 +264,10 @@ int eng_get_string_len(int s) { if (s < 0 || s >= NUM_STRINGS) return 0; return 
 /* ---------- verbs ---------- */
 typedef struct { u8 used, id, on, color, hicolor, dimcolor, key, center; s16 x, y; u8 name[128]; u16 image; u8 saveid; u8 back; s16 lx, lw; u8 lvalid, charset; } VerbSlot;
 static VerbSlot verbs[NUM_VERBS + 1];
+void ui_dump_verbs(void)
+{
+	for (int i = 1; i < NUM_VERBS; i++) { VerbSlot *v = &verbs[i]; if (!v->used) continue; fprintf(stderr, "verb %d id=%d on=%d x=%d y=%d col=%d hi=%d center=%d charset=%d img=%d name:", i, v->id, v->on, v->x, v->y, v->color, v->hicolor, v->center, v->charset, v->image); for (int k = 0; v->name[k] && k < 127; k++) fprintf(stderr, " %02x", v->name[k]); fprintf(stderr, "\n"); }
+}
 static int find_verb(int id, int create)
 {
 	for (int i = 1; i < NUM_VERBS; i++) if (verbs[i].used && verbs[i].id == id && !verbs[i].saveid) return i;   /* saved verbs are invisible to lookups */

@@ -52,6 +52,8 @@ int main(int argc, char **argv)
 		if (getenv("EGOLOG") && f >= 1300 && f % atoi(getenv("EGOLOG")) == 0) { Actor *e = &g_actors[1]; fprintf(stderr, "f%d room %d ego %d,%d box %d scale %d moving %d facing %d tgt %d,%d vis %d\n", f, g_room, e->x, e->y, e->walkbox, e->scalex, e->moving, e->facing, e->tx, e->ty, e->visible); }
 		if (getenv("OBJRUN")) { int ff, o, v; if (sscanf(getenv("OBJRUN"), "%d:%d:%d", &ff, &o, &v) == 3 && ff == f) { extern void vm_run_object_script(int,int,int,int,const s16*); vm_run_object_script(o, v, 0, 0, NULL); } }
 		if (getenv("CLASSLOG") && f == atoi(getenv("CLASSLOG"))) { extern u32 g_obj_class[]; fprintf(stderr, "class 635=%06x 636=%06x 637=%06x 869=%06x\n", g_obj_class[635], g_obj_class[636], g_obj_class[637], g_obj_class[869]); }
+		if (getenv("VERBDUMP") && f == atoi(getenv("VERBDUMP"))) { extern void ui_dump_verbs(void); ui_dump_verbs(); }
+		if (getenv("ARROWS") && f >= atoi(getenv("ARROWS"))) { eng_verb_op(107, 6, 0, 0, 0, 0, 0); eng_verb_op(108, 6, 0, 0, 0, 0, 0); }
 		if (getenv("TRACE_FROM") && f == atoi(getenv("TRACE_FROM"))) g_trace = 1;
 		static s16 pv[NUM_VARS]; if (getenv("DIFFVARS") && (f == atoi(getenv("DIFFVARS")) - 1 || f == atoi(getenv("DIFFVARS")) + 60)) { if (f < atoi(getenv("DIFFVARS"))) memcpy(pv, g_vars, sizeof pv); else for (int i = 0; i < NUM_VARS; i++) if (pv[i] != g_vars[i]) fprintf(stderr, "var %d: %d -> %d\n", i, pv[i], g_vars[i]); }
 		{ static u8 *sv; static u32 svn; extern int state_save(u8 **, u32 *); extern int state_load(const u8 *, u32);

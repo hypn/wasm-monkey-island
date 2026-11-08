@@ -700,10 +700,11 @@ static void op_if_class_of(void)                                  /* 932e: 0x1d 
 		opcode = fetch8(); if (opcode == 0xFF) break;
 		int cls = var_or_word(0x80);
 		int has = eng_get_class(obj, cls & 0x7f);
-		if (((cls & 0x80) && has) || (!(cls & 0x80) && !has)) any = 1;
+		if (((cls & 0x80) && has) || (!(cls & 0x80) && !has)) any = 1; else bad = 1;
 	}
-	/* handler 932e: executes the next instruction if ANY listed class test matched, else jumps */
-	(void)bad; COND_JUMP_IF(!any);
+	/* The DEMO exe (handler 932e) executes the next instruction if ANY listed class test matched; the final game (ScummVM
+	 * o5_ifClassOfIs, which plays the retail data correctly) needs ALL of them. Single-class tests are identical. */
+	extern int g_vga; COND_JUMP_IF(g_vga ? bad : !any);
 }
 static void op_pseudo_room(void)                                  /* 93c8: 0xcc */
 {
