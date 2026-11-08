@@ -103,7 +103,7 @@ void plat_timestamp(char *out, int max) { js_timestamp(out, max); }
 #include <stdio.h>
 #include <string.h>
 #include "state.h"
-extern char g_room_names[256][10];
+extern char g_room_names[256][10]; extern const char *ui_expanded(const u8 *);
 static char *dbg_buf; static size_t dbg_len, dbg_cap;
 static void dj(const char *fmt, ...)
 {
@@ -136,11 +136,11 @@ EMSCRIPTEN_KEEPALIVE const char *mi_debug_json(void)
 	for (int i = 0, first = 1; i < NUM_SLOTS; i++) { Slot *s = &g_slots[i]; if (s->status == SS_DEAD) continue;
 		dj("%s{\"slot\":%d,\"script\":%d,\"where\":%d,\"status\":%d,\"pc\":%u,\"delay\":%d}", first ? "" : ",", i, s->number, s->where, s->status, s->pc, s->delay); first = 0; }
 	dj("],\"inventory\":[");
-	for (int i = 1, first = 1; i < NUM_INVENTORY; i++) if (g_inventory[i]) { dj("%s{\"id\":%d,\"owner\":%d,\"name\":", first ? "" : ",", g_inventory[i], g_obj_owner[g_inventory[i]] & 15); djs((const char *)eng_obj_name(g_inventory[i])); dj("}"); first = 0; }
+	for (int i = 1, first = 1; i < NUM_INVENTORY; i++) if (g_inventory[i]) { dj("%s{\"id\":%d,\"owner\":%d,\"name\":", first ? "" : ",", g_inventory[i], g_obj_owner[g_inventory[i]] & 15); djs(ui_expanded(eng_obj_name(g_inventory[i]))); dj("}"); first = 0; }
 	dj("],\"objects\":[");
 	for (int i = 0; i < g_nobjs; i++) { RoomObject *o = &g_objs[i];
 		dj("%s{\"id\":%d,\"state\":%d,\"owner\":%d,\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d,\"walk\":[%d,%d],\"name\":", i ? "," : "", o->id, eng_get_state(o->id), g_obj_owner[o->id] & 15, o->x, o->y, o->w, o->h, o->walk_x, o->walk_y);
-		djs((const char *)eng_obj_name(o->id)); dj("}"); }
+		djs(ui_expanded(eng_obj_name(o->id))); dj("}"); }
 	dj("],\"vars\":{");
 	for (int i = 0, first = 1; i < NUM_VARS; i++) if (g_vars[i]) { dj("%s\"%d\":%d", first ? "" : ",", i, g_vars[i]); first = 0; }
 	dj("},\"bits_set\":[");

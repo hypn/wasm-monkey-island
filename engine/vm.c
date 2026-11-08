@@ -664,7 +664,7 @@ static void op_actor_ops(void)                                    /* 8f9e: 0x13 
 		case 9: p[0] = var_or_byte(0x80); p[1] = var_or_byte(0x40); p[2] = var_or_byte(0x20); break;
 		case 11: p[0] = var_or_word(0x80); break;
 		case 13: p[0] = var_or_byte(0x80); p[1] = var_or_byte(0x40); break;
-		case 15: { u8 c; do { c = fetch8(); if (tl < 62) tb[tl++] = c; } while (c); } break;
+		case 15: tl = fetch_inline_text(tb, 62); break;   /* actor name: same escape-aware reader as every other inline text */
 		case 17: { s16 v[16]; for (int i = 0; i < 16; i++) v[i] = 0xff; int n = 0; s16 tmp[16]; (void)n; get_word_vararg(tmp); for (int i = 0; i < 16; i++) p[i] = tmp[i]; } break;
 		case 18: case 19: p[0] = var_or_byte(0x80); break;                               /* width / scale: BYTE operands (8f9e) */
 		default: break;

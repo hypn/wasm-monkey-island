@@ -32,7 +32,7 @@ static int cs_string_w(int cs, const u8 *s, int len)
 {
 	int w = 1;
 	for (int i = 0; i < len && s[i] && s[i] != 0xD; i++) {
-		if (s[i] == 0xFF || s[i] == 0xFE) { u8 c = s[++i]; if (c == 1 || c == 3 || c == 8) return w; if (c == 12) i += 2; continue; }
+		if (s[i] == 0xFF || s[i] == 0xFE) { u8 c = s[++i]; if (c == 1 || c == 2 || c == 3 || c == 8 || c == 9) return w; if (c == 12 || c == 10 || c == 13 || c == 21) i += 2; continue; }   /* ScummVM getStringWidth: 1/2/3/9 end the line, 10/12/13/21 skip a 16-bit operand */
 		if (s[i] == '@') continue;
 		w += cs_char_w(cs, s[i]);
 	}
@@ -62,6 +62,22 @@ static int msg_timer, msg_actor, msg_color, msg_x, msg_y, msg_center, msg_keep;
 static int msg_right = 319;
 static u8 msg_buf_layer_dirty;
 
+static void expand_codes(const u8 *in, int len, u8 *out, int *olen);
+/* length of a raw 0-terminated script text: an FF escape carries a 16-bit operand except codes 1/2/3/8 (so an operand byte may be 0) */
+static int raw_text_len(const u8 *s)
+{
+	int n = 0;
+	while (s[n]) { if (s[n] == 0xFF && s[n + 1]) { u8 c = s[n + 1]; n += (c == 1 || c == 2 || c == 3 || c == 8) ? 2 : 4; } else n++; }
+	return n;
+}
+/* Names and strings can themselves contain escapes ("FF 04 <var> pieces of eight"): ScummVM expands them recursively (convertNameMessage / convertStringMessage -> convertMessageToString) */
+static void expand_nested(const u8 *src, u8 *out, int *o)
+{
+	static int depth; if (!src || depth > 3) return;
+	u8 tmp[512]; int tn = 0; int l = raw_text_len(src); if (l > 500) l = 500;
+	depth++; expand_codes(src, l, tmp, &tn); depth--;
+	for (int i = 0; i < tn && *o < 500; i++) out[(*o)++] = tmp[i];
+}
 static void expand_codes(const u8 *in, int len, u8 *out, int *olen)
 {
 	int o = 0;
@@ -77,9 +93,9 @@ static void expand_codes(const u8 *in, int len, u8 *out, int *olen)
 				char tmp[16];
 				if (code == 4) { snprintf(tmp, sizeof tmp, "%d", var); for (char *p = tmp; *p; p++) out[o++] = (u8)*p; }
 				else if (code == 6) { const u8 *n = (var > 0 && var <= g_vars[VAR_NUM_ACTOR] && var < 13) ? (const u8 *)g_actors[var].name : eng_obj_name(var);   /* getObjOrActorName: ids <= numActors are actors */
-					 for (; *n && o < 500; n++) if (*n != '@') out[o++] = *n; }
+					 expand_nested(n, out, &o); }
 				else if (code == 5) { extern const u8 *eng_verb_name(int); const u8 *n = eng_verb_name(var); if (n) for (; *n && o < 500; n++) out[o++] = *n; }
-				else { extern const u8 *eng_string_ptr(int); const u8 *n = eng_string_ptr(var); if (n) for (; *n && o < 500; n++) out[o++] = *n; }
+				else { extern const u8 *eng_string_ptr(int); expand_nested(eng_string_ptr(var), out, &o); }
 			} else if (code == 12) {                                   /* FF 0C <u16 colour> (ScummVM handleNextCharsetCode): 0xFF = back to the default colour. Kept as FF 0C hi lo, each nibble|0x80 so no byte is 0 or 0xFF */
 				int col = rd16(in + i + 1) & 0xFF; i += 2;
 				out[o++] = 0xFF; out[o++] = 12; out[o++] = (u8)(0x80 | (col >> 4)); out[o++] = (u8)(0x80 | (col & 15));
@@ -101,6 +117,12 @@ void ui_room_start(void)
 {
 	memset(g_txt, 0xFF, sizeof g_txt);
 	msg_state = 0; msg_timer = 0; msg_keep = 0; g_vars[VAR_HAVE_MSG] = 0; g_vars[VAR_TALK_ACTOR] = 0;
+}
+/* debug helper: a name/string with its escapes expanded (what the screen would show) */
+const char *ui_expanded(const u8 *raw)
+{
+	static u8 buf[512]; int n = 0; if (!raw) return ""; int l = raw_text_len(raw); if (l > 500) l = 500;
+	expand_codes(raw, l, buf, &n); return (const char *)buf;
 }
 void txt_clear(void)
 {
@@ -202,7 +224,7 @@ void txt_update(void)                        /* FUN_1000_9b64 */
 		/* display */
 		u8 stripped[512]; int sl = 0, i = 0; int keep_after = 0; int wait_after = 0;
 		for (i = 0; i < msg_len; i++) {
-			if (msg[i] == 0xFF) { u8 c = msg[++i]; if (c == 3) { wait_after = 1; break; } if (c == 2) { keep_after = 1; break; } if (c == 1 || c == 8) { stripped[sl++] = 0xFF; stripped[sl++] = 1; } else if (c == 12) { stripped[sl++] = 0xFF; stripped[sl++] = 12; stripped[sl++] = msg[i + 1]; stripped[sl++] = msg[i + 2]; i += 2; } continue; }
+			if (msg[i] == 0xFF) { u8 c = msg[++i]; if (c == 3) { wait_after = 1; break; } if (c == 2) { keep_after = 1; break; } if (c == 1 || c == 8) { stripped[sl++] = 0xFF; stripped[sl++] = 1; if (c == 8) while (i + 1 < msg_len && msg[i + 1] == ' ') i++; /* addLinebreaks: in spoken text the spaces after FF 08 are dropped (verb lines keep them as indent) */ } else if (c == 12) { stripped[sl++] = 0xFF; stripped[sl++] = 12; stripped[sl++] = msg[i + 1]; stripped[sl++] = msg[i + 2]; i += 2; } continue; }
 			stripped[sl++] = msg[i];
 		}
 		stripped[sl] = 0;
