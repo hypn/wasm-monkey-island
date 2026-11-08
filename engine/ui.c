@@ -67,6 +67,9 @@ static void expand_codes(const u8 *in, int len, u8 *out, int *olen)
 	int o = 0;
 	for (int i = 0; i < len && o < 500; i++) {
 		u8 c = in[i];
+		if (c == 0xFE && i + 1 < len && (in[i + 1] == 1 || in[i + 1] == 2 || in[i + 1] == 3 || in[i + 1] == 8)) {   /* 0xFE is an alias of 0xFF in rendered text for v<=6 (ScummVM drawString); verb lines use FE 08 as a line break */
+			out[o++] = 0xFF; out[o++] = in[++i]; continue;
+		}
 		if (c == 0xFF) {
 			u8 code = in[++i];
 			if (code >= 4 && code <= 7) {
@@ -86,6 +89,7 @@ static void expand_codes(const u8 *in, int len, u8 *out, int *olen)
 		}
 		if (c == '@') continue;
 		if (c == 0) break;
+		if (c == '\r' || c == '\n') { out[o++] = 0xFF; out[o++] = 1; continue; }   /* literal CR/LF are line breaks too (ScummVM charset: chr == '\n' / '\r' / 13) */
 		out[o++] = c;
 	}
 	out[o] = 0; *olen = o;
@@ -163,7 +167,9 @@ void txt_print(int slot, int actor, const u8 *text, int len, int x, int y, int c
 		if (overhead && actor < 13) {
 			Actor *a = &g_actors[actor];
 			sx = a->x - g_cam_cur + 160; if (sx < 80) sx = 80; if (sx > 240) sx = 240;
-			sy = a->y + a->elevation - 80; if (sy < 1) sy = 1; sy += g_view_top;
+			{ int ty = g_vars[54];   /* VAR_V5_TALK_STRING_Y (displayDialog): < 0 = offset above the actor, > 0 = absolute row; 0 (unset, e.g. demo) keeps the old -80 */
+			  sy = ty > 0 ? ty : a->y + a->elevation + (ty < 0 ? ty : -80); }
+			if (sy < 1) sy = 1; sy += g_view_top;
 		}
 		if (getenv("TRACE_TXT")) fprintf(stderr, "talk actor=%d x=%d y=%d col=%d overhead=%d center=%d len=%d '%s'\n", actor, x, y, color, overhead, center, n, buf);
 		memcpy(msg, buf, n + 1); msg_len = n; msg_pos = 0;
@@ -243,31 +249,51 @@ static void verb_text(const VerbSlot *v, u8 *out, int *n)
 	int l = 0; while (l < 127 && v->name[l]) { if (v->name[l] == 0xFF) l += (v->name[l + 1] >= 4 && v->name[l + 1] <= 7) || (v->name[l + 1] >= 9 && v->name[l + 1] != 11) ? 4 : 2; else l++; }
 	expand_codes(v->name, l, out, n);
 }
+/* A verb text can span several lines (FF 01 / FF 08 = new line, ScummVM drawString): every line starts at the verb's x
+ * (or is centred on it) and the next one is one font height lower. Returns the bounding box of the whole text. */
+static s16 verb_lh[NUM_VERBS + 1];      /* height of the last drawn text per verb slot (not part of the save: layout cache only) */
+static void verb_bounds(const VerbSlot *v, const u8 *t, int tn, int *bx, int *bw, int *bh)
+{
+	int minx = 9999, maxx = -9999, lines = 1;
+	for (const u8 *p = t; ; ) {
+		int w = cs_string_w(v->charset, p, (int)(t + tn - p)); int x = v->center ? v->x - w / 2 : v->x;
+		if (x < minx) minx = x; if (x + w > maxx) maxx = x + w;
+		const u8 *q = p; while (*q && !(q[0] == 0xFF && (q[1] == 1 || q[1] == 8))) q += (q[0] == 0xFF) ? ((q[1] == 12) ? 4 : 2) : 1;
+		if (!*q) break; p = q + 2; lines++;
+	}
+	*bx = minx; *bw = maxx - minx; *bh = lines * cs_height(v->charset);
+}
 static void verb_erase_rect(VerbSlot *v)
 {
 	u8 t[512]; int tn; verb_text(v, t, &tn);
-	int w = cs_string_w(v->charset, t, tn); int h = cs_height(v->charset);
-	int x = v->center ? v->x - w / 2 : v->x;
-	if (v->lvalid) { if (v->lx < x) { w += x - v->lx; x = v->lx; } if (v->lx + v->lw > x + w) w = v->lx + v->lw - x; }
+	int x, w, h; verb_bounds(v, t, tn, &x, &w, &h);
+	if (v->lvalid) { if (v->lx < x) { w += x - v->lx; x = v->lx; } if (v->lx + v->lw > x + w) w = v->lx + v->lw - x; if (verb_lh[v - verbs] > h) h = verb_lh[v - verbs]; }
 	for (int yy = v->y; yy < v->y + h && yy < SCREEN_H; yy++) for (int xx = x; xx < x + w && xx < SCREEN_W; xx++) if (xx >= 0 && yy >= 0) g_ui[yy * SCREEN_W + xx] = 0;
 	v->lvalid = 0;
 }
-static void verb_erase_rect(VerbSlot *v);
 static void verb_draw(VerbSlot *v, int hover)
 {
 	if (!v->used || !v->on || v->saveid || !v->name[0]) return;
 	int color = v->on == 2 ? v->dimcolor : ((hover && v->hicolor) ? v->hicolor : v->color);      /* ac82: hover colour only if one was set */
 	u8 t[512]; int tn; verb_text(v, t, &tn);
-	int w = cs_string_w(v->charset, t, tn);
-	int x = v->center ? v->x - w / 2 : v->x;
+	int bx, bw, bh; verb_bounds(v, t, tn, &bx, &bw, &bh);
 	verb_erase_rect(v);
-	v->lx = (s16)x; v->lw = (s16)w; v->lvalid = 1;
-	int px = x;
-	for (const u8 *p = t; *p; p++) {
-		if (*p == 0xFF) { p++; continue; }
-		cs_draw_char(g_ui, SCREEN_W, SCREEN_H, v->charset, *p, px, v->y, color); px += cs_char_w(v->charset, *p);
+	v->lx = (s16)bx; v->lw = (s16)bw; verb_lh[v - verbs] = (s16)bh; v->lvalid = 1;
+	int cur = color, y = v->y;
+	for (const u8 *p = t; *p; ) {
+		int w = cs_string_w(v->charset, p, (int)(t + tn - p)); int px = v->center ? v->x - w / 2 : v->x;
+		for (; *p; p++) {
+			if (*p == 0xFF) {
+				if (p[1] == 1 || p[1] == 8) { p += 2; break; }
+				if (p[1] == 12) { int c = ((p[2] & 15) << 4) | (p[3] & 15); cur = c == 0xFF ? color : c; p += 3; } else p++;
+				continue;
+			}
+			cs_draw_char(g_ui, SCREEN_W, SCREEN_H, v->charset, *p, px, y, cur); px += cs_char_w(v->charset, *p);
+		}
+		y += cs_height(v->charset);
 	}
 }
+
 void eng_verb_op(int verb, int sub, int a, int b, const u8 *text, int len, int color)
 {
 	(void)color; (void)len;
@@ -312,8 +338,7 @@ static int verb_at(int x, int y)                         /* FUN_1000_adfa: highe
 	for (int i = NUM_VERBS - 1; i >= 0; i--) {
 		VerbSlot *v = &verbs[i]; if (!v->used || v->on != 1 || v->saveid || !v->id || !v->name[0]) continue;
 		u8 t[512]; int tn; verb_text(v, t, &tn);
-		int w = cs_string_w(v->charset, t, tn); int h = cs_height(v->charset);
-		int vx = v->center ? v->x - w / 2 : v->x;
+		int vx, w, h; verb_bounds(v, t, tn, &vx, &w, &h);
 		if (x >= vx && x < vx + w && y >= v->y && y < v->y + h) return v->id;
 	}
 	return 0;

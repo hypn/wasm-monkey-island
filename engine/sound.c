@@ -388,7 +388,9 @@ int snd_pull(float *dst, int n, double out_rate)
 	/* keep the audio close to the game: the ring may hold up to ~1.3 s (it keeps filling while the browser's audio is not
 	 * running yet, e.g. before the first click, and the game clock can briefly run ahead). Without this the backlog would
 	 * become a permanent delay, so music would start and stop noticeably late after scene changes. */
-	{ unsigned max_lag = OPL_RATE * 30 / 100; if (wr_pos - rd_pos > max_lag) rd_pos = wr_pos - max_lag; }
+	/* Gentle catch-up instead of a jump (a skipped block is an audible click): above ~250 ms of backlog play up to 3 % faster
+	 * (inaudible), only hard-trim when it is far behind (>700 ms). */
+	{ unsigned lag = wr_pos - rd_pos; if (lag > OPL_RATE * 70 / 100) rd_pos = wr_pos - OPL_RATE * 25 / 100; else if (lag > OPL_RATE * 25 / 100) step *= 1.0 + 0.03 * (lag - OPL_RATE * 25 / 100) / (OPL_RATE * 20 / 100 + 1.0) * (lag < OPL_RATE * 45 / 100 ? 1.0 : 0.0) + (lag >= OPL_RATE * 45 / 100 ? 0.03 : 0.0); }
 	/* pre-buffering: if the game thread is late (slow phone) the ring runs dry; instead of playing a crackly partial block
 	 * wait until ~120 ms are queued again, so a hiccup is one short gap rather than stuttering */
 	{ static int buffering = 1; unsigned need = (unsigned)(n * (OPL_RATE / out_rate)) + 4, avail = wr_pos - rd_pos;
