@@ -360,6 +360,7 @@ static void op_print(void)                                        /* 76b8: 0x14 
 static void op_get_dist(void)                                     /* 76cc: 0x34 */
 {
 	get_result_pos(); int a = var_or_word(0x80); int b = var_or_word(0x40);
+	{ extern int eng_obj_pos(int,int*,int*); if (getenv("TRACE_DIST")) { int ax = -1, ay = -1, bx = -1, by = -1; eng_obj_pos(a, &ax, &ay); eng_obj_pos(b, &bx, &by); fprintf(stderr, "getDist(%d [%d,%d], %d [%d,%d]) = %d (script %d)\n", a, ax, ay, b, bx, by, eng_dist(a, b), g_slots[g_cur_slot].number); } }
 	set_result((s16)eng_dist(a, b));
 }
 static void op_closest_obj_actor(void)                            /* 7706: 0x66 */

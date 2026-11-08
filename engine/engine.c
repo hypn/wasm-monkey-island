@@ -363,25 +363,31 @@ void eng_start_room(int room)           /* FUN_1000_2a6e */
 		g_vars[VAR_CAMERA_MIN_X] = 160;
 		g_vars[VAR_CAMERA_MAX_X] = (g_room_w / 8 - 20) * 8;
 		for (int a = 1; a < 13; a++) if (g_actors[a].room == room) act_put(a, g_actors[a].x, g_actors[a].y, room);
+		{ extern int g_ego_positioned; g_ego_positioned = 0; }     /* startScene: _egoPositioned = false right before runEntryScript */
 		eng_run_entry();
 	} else { g_nobjs = 0; g_nboxes = 0; }
 	g_screen_dirty = 1;
 }
 
-void eng_load_room_with_ego(int obj, int room, int x, int y)    /* handler 726e */
+void eng_load_room_with_ego(int obj, int room, int x, int y)    /* handler 726e / ScummVM o5_loadRoomWithEgo */
 {
+	extern int g_ego_positioned;
 	int ego = g_vars[VAR_EGO];
 	int ox = 0, oy = 0;
 	act_put(ego, g_actors[ego].x, g_actors[ego].y, room);
+	g_ego_positioned = 0;
 	g_vars[VAR_WALKTO_OBJ] = obj;
 	if (room != g_room) eng_start_room(room);
 	g_vars[VAR_WALKTO_OBJ] = 0;
+	/* Only put ego at the object's walk point if the room's entry script did not already position him (ScummVM: !_egoPositioned);
+	 * e.g. the Low Street archway entry script puts him at (155,72) in the arch and walks him down. */
 	if (eng_obj_where(obj) == WIO_NOTFOUND) { /* object not found: ego stays */ }
-	else if (eng_obj_xy(obj, &ox, &oy)) {
+	else if (!g_ego_positioned && eng_obj_xy(obj, &ox, &oy)) {
 		act_put(ego, ox, oy, g_room);
 		{ extern int eng_obj_walk_dir(int); act_set_facing(ego, (eng_obj_walk_dir(obj) ^ 1) & 3); }   /* 726e: animate 0xF8 + (dir^1): a real direction change, so every limb follows */
 		(void)new_dir_to_old;
 	}
+	g_actors[ego].moving = 0;
 	g_vars[VAR_CAMERA_POS_X] = g_actors[ego].x;
 	eng_set_camera_at(g_actors[ego].x);
 	eng_follow_actor(ego);                                   /* 726e ends with FUN_1000_7e22(ego) */

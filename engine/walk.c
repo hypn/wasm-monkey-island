@@ -38,40 +38,69 @@ int walk_in_box(int n, int x, int y)
 	}
 	return !(pos && neg);
 }
-static double nearest_on_segment(V2 a, V2 b, double x, double y, double *ox, double *oy)
+/* Nearest point on a box edge, in the original's INTEGER arithmetic (truncating divisions). A floating-point nearest point rounded
+ * differently (e.g. (167,131) instead of (166,130) on the diagonal path boxes of the island map), which changed distances by 1 and
+ * flipped script conditions such as `dist(ego, bridge) <= 2` (Troll bridge exit loop, C31). Same formulas as ScummVM closestPtOnLine. */
+static V2 closest_on_line(V2 s, V2 e, int px, int py)
 {
-	double dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy, t = l2 > 0 ? ((x - a.x) * dx + (y - a.y) * dy) / l2 : 0;
-	if (t < 0) t = 0; if (t > 1) t = 1;
-	*ox = a.x + t * dx; *oy = a.y + t * dy;
-	return (*ox - x) * (*ox - x) + (*oy - y) * (*oy - y);
+	int sx = (int)s.x, sy = (int)s.y, ex = (int)e.x, ey = (int)e.y;
+	int lx = ex - sx, ly = ey - sy, rx, ry;
+	if (ex == sx) { rx = sx; ry = py; }
+	else if (ey == sy) { rx = px; ry = sy; }
+	else {
+		int dist = lx * lx + ly * ly, a, b, c;
+		if (abs(lx) > abs(ly)) { a = sx * ly / lx; b = px * lx / ly; c = (a + b - sy + py) * ly * lx / dist; rx = c; ry = c * ly / lx - a + sy; }
+		else { a = sy * lx / ly; b = py * ly / lx; c = (a + b - sx + px) * ly * lx / dist; rx = c * lx / ly - a + sx; ry = c; }
+	}
+	if (abs(ly) < abs(lx)) {
+		if (lx > 0) { if (rx < sx) { rx = sx; ry = sy; } else if (rx > ex) { rx = ex; ry = ey; } }
+		else        { if (rx > sx) { rx = sx; ry = sy; } else if (rx < ex) { rx = ex; ry = ey; } }
+	} else {
+		if (ly > 0) { if (ry < sy) { rx = sx; ry = sy; } else if (ry > ey) { rx = ex; ry = ey; } }
+		else        { if (ry > sy) { rx = sx; ry = sy; } else if (ry < ey) { rx = ex; ry = ey; } }
+	}
+	return (V2){ rx, ry };
 }
 static double nearest_in_box(int n, int x, int y, int *ox, int *oy)
 {
 	if (walk_in_box(n, x, y)) { *ox = x; *oy = y; return 0; }
-	V2 p[4]; quad_pts(&g_boxes[n], p); double best = 1e18, bx = x, by = y;
-	for (int i = 0; i < 4; i++) { double cx, cy, d = nearest_on_segment(p[i], p[(i + 1) & 3], x, y, &cx, &cy); if (d < best) { best = d; bx = cx; by = cy; } }
-	*ox = (int)floor(bx + 0.5); *oy = (int)floor(by + 0.5);
-	if (!walk_in_box(n, *ox, *oy)) {                      /* rounding pushed us out: try the neighbouring integers */
-		for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) if (walk_in_box(n, *ox + dx, *oy + dy)) { *ox += dx; *oy += dy; return best; }
-	}
-	return best;
+	V2 p[4]; quad_pts(&g_boxes[n], p); double best = 1e18; int bx = x, by = y;
+	for (int i = 0; i < 4; i++) { V2 c = closest_on_line(p[i], p[(i + 1) & 3], x, y); double d = (c.x - x) * (c.x - x) + (c.y - y) * (c.y - y); if (d < best) { best = d; bx = (int)c.x; by = (int)c.y; } }
+	*ox = bx; *oy = by; return best;
+}
+static int box_quick_reject(int b, int x, int y, int t)      /* the original's cheap bounding test used before the exact one */
+{
+	V2 p[4]; quad_pts(&g_boxes[b], p); int all;
+	all = 1; for (int i = 0; i < 4; i++) if (!(x - t > p[i].x)) all = 0; if (all) return 1;
+	all = 1; for (int i = 0; i < 4; i++) if (!(x + t < p[i].x)) all = 0; if (all) return 1;
+	all = 1; for (int i = 0; i < 4; i++) if (!(y - t > p[i].y)) all = 0; if (all) return 1;
+	all = 1; for (int i = 0; i < 4; i++) if (!(y + t < p[i].y)) all = 0; if (all) return 1;
+	return 0;
 }
 static int box_usable(int b, int actor)
 {
 	int f = g_boxes[b].flags;
 	return !((f & BF_INVISIBLE) && !((f & BF_PLAYERONLY) && actor != g_vars[VAR_EGO]));
 }
-/* nearest walkable point; returns the box, or NO_BOX when the actor ignores boxes / the room has none */
+/* nearest walkable point; returns the box, or NO_BOX when the actor ignores boxes / the room has none.
+ * Like the original: boxes are tried from the LAST to the first, first with a 30 px then an 80 px window and finally without one;
+ * a point inside a box stays; otherwise the box whose border is closest (strictly nearer wins, so later boxes win ties). */
 int walk_snap(int actor, int *x, int *y)
 {
 	if (eng_get_class(actor, 22) || g_nboxes == 0) return NO_BOX;       /* class 22: ignore boxes (c0ee/cad6 check bit 0x20 of class byte 3) */
-	int best = NO_BOX, bx = *x, by = *y; double bd = 1e18;
-	for (int b = 0; b < g_nboxes; b++) {
-		if (!box_usable(b, actor)) continue;
-		int px, py; double d = nearest_in_box(b, *x, *y, &px, &py);
-		if (d < bd) { bd = d; best = b; bx = px; by = py; if (d == 0) break; }
+	static const int thresholds[3] = { 30, 80, 0 };
+	for (int ti = 0; ti < 3; ti++) {
+		int thr = thresholds[ti], best = NO_BOX, bx = *x, by = *y; double bd = 65535;
+		for (int b = g_nboxes - 1; b >= 0; b--) {
+			if (!box_usable(b, actor)) continue;
+			if (thr > 0 && box_quick_reject(b, *x, *y, thr)) continue;
+			int px, py; double d = nearest_in_box(b, *x, *y, &px, &py);
+			if (d == 0 && walk_in_box(b, *x, *y)) { *x = px; *y = py; return b; }
+			if (d < bd) { bd = d; bx = px; by = py; best = b; if (d == 0) { *x = bx; *y = by; return b; } }
+		}
+		if (best != NO_BOX && (thr == 0 || (double)thr * thr >= bd)) { *x = bx; *y = by; return best; }
 	}
-	*x = bx; *y = by; return best;
+	return NO_BOX;
 }
 
 /* ------------------------------------------------------------------ box graph */

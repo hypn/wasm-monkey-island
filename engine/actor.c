@@ -56,9 +56,11 @@ void vm_actor_ops(int a, int sub, const s16 *p, const u8 *text, int tlen)
 	}
 }
 
+int g_ego_positioned;   /* ScummVM _egoPositioned: set when ego is put somewhere (by the room's entry script), cleared before the entry script runs */
 void act_put(int a, int x, int y, int room)         /* Actor::putActor (FUN_1000_b118) */
 {
 	Actor *ac = &g_actors[a];
+	if (a == g_vars[VAR_EGO]) g_ego_positioned = 1;
 	int was_visible = ac->visible;
 	ac->x = x; ac->y = y; ac->room = room; ac->needs_redraw = 1;
 	if (room == g_room && room) {
