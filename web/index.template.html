@@ -119,7 +119,7 @@
       try {
         if (!actx) {
           const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
-          actx = new AC(); const N = 4096, node = actx.createScriptProcessor(N, 1, 1);
+          actx = new AC(); const N = 8192, node = actx.createScriptProcessor(N, 1, 1);
           const p = mod._mi_alloc(N * 4);
           node.onaudioprocess = (e) => { const out = e.outputBuffer.getChannelData(0); mod._mi_snd_pull(p, N, actx.sampleRate); out.set(mod.HEAPF32.subarray(p >> 2, (p >> 2) + N)); };
           const mute = actx.createGain(); mute.gain.value = 1;      // keep the processor pulled by a graph that reaches the output
@@ -174,7 +174,7 @@
     menuBtn.addEventListener('click', () => { if (!menuBtn.disabled) { mod._mi_key(319); } menuBtn.blur(); canvas.focus(); });
     window.__mi = mod; window.__frames = 0;
     let last = performance.now(), acc = 0; window.__speed = 1;   // test hook (set from the console / test driver), not a URL option
-    function tick(now) {
+    function tick(now, bg) {
       acc += (now - last) * (window.__speed || 1); last = now;
       const interval = mod._mi_frame_ms();
       let n = 0;
@@ -186,10 +186,13 @@
       if (location.hash === '#debug') status.textContent = 'frames=' + window.__frames + ' room=' + mod._mi_room();
       menuBtn.disabled = !mod._mi_menu_available();
       canvas.style.cursor = mod._mi_cursor_visible() ? 'crosshair' : 'none';
-      if (n) { img.data.set(mod.HEAPU8.subarray(mod._mi_framebuffer(), mod._mi_framebuffer() + 320 * 200 * 4)); ctx.putImageData(img, 0, 0); }
-      requestAnimationFrame(tick);
+      if (n && !bg) { img.data.set(mod.HEAPU8.subarray(mod._mi_framebuffer(), mod._mi_framebuffer() + 320 * 200 * 4)); ctx.putImageData(img, 0, 0); }
+      if (!bg) requestAnimationFrame(tick);
     }
     requestAnimationFrame(tick);
+    // Browsers stop requestAnimationFrame in hidden/background tabs; the engine (and the audio it synthesises per frame)
+    // would stall and the music cut out. Keep stepping from a timer while hidden (audible pages are not throttled hard).
+    setInterval(() => { if (document.hidden) tick(performance.now(), true); }, 30);
   } catch (err) { status.textContent = 'Error: ' + err.message; console.error(err); }
 })();
 </script>
