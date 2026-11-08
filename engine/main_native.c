@@ -44,6 +44,9 @@ int main(int argc, char **argv)
 		static s16 pv[NUM_VARS]; if (getenv("DIFFVARS") && (f == atoi(getenv("DIFFVARS")) - 1 || f == atoi(getenv("DIFFVARS")) + 60)) { if (f < atoi(getenv("DIFFVARS"))) memcpy(pv, g_vars, sizeof pv); else for (int i = 0; i < NUM_VARS; i++) if (pv[i] != g_vars[i]) fprintf(stderr, "var %d: %d -> %d\n", i, pv[i], g_vars[i]); }
 		{ static u8 *sv; static u32 svn; extern int state_save(u8 **, u32 *); extern int state_load(const u8 *, u32);
 		  if (getenv("SAVE_AT") && f == atoi(getenv("SAVE_AT"))) { int r = state_save(&sv, &svn); fprintf(stderr, "state_save -> %d, %u bytes (room %d)\n", r, svn, g_room); }
+		  if (getenv("PICKUP")) { int ff, o; if (sscanf(getenv("PICKUP"), "%d:%d", &ff, &o) == 2 && ff == f) { extern void eng_pickup_object(int); eng_pickup_object(o); } }
+		  if (getenv("SAVE_FILE") && getenv("SAVE_AT") && f == atoi(getenv("SAVE_AT")) && sv) { FILE *sf = fopen(getenv("SAVE_FILE"), "wb"); fwrite(sv, 1, svn, sf); fclose(sf); }
+		  if (getenv("LOAD_FILE") && getenv("LOAD_AT") && f == atoi(getenv("LOAD_AT"))) { u32 ln; u8 *ld = rdf(getenv("LOAD_FILE"), &ln); int r = state_load(ld, ln); fprintf(stderr, "state_load(file) -> %d (room %d)\n", r, g_room); for (int i = 1; i < NUM_INVENTORY; i++) if (g_inventory[i]) fprintf(stderr, "inv[%d]=%d verb entry(look at)=%d code[18]=%d sum=%u\n", i, g_inventory[i], eng_find_verb_entry(g_inventory[i], 0xFF), g_inv_obj_data[i][18], ({unsigned s=0; for (int k=0;k<INV_OBJ_MAX;k++) s=s*31+g_inv_obj_data[i][k]; s;})); }
 		  if (getenv("LOAD_AT") && f == atoi(getenv("LOAD_AT")) && sv) { int r = state_load(sv, svn); fprintf(stderr, "state_load -> %d (room %d)\n", r, g_room); } }
 		eng_frame();
 		{ extern int snd_read_raw(s16 *, int); s16 sb[4096]; int n; while ((n = snd_read_raw(sb, 4096)) > 0) { if (wav) { fwrite(sb, 2, n, wav); wav_n += n; } } }

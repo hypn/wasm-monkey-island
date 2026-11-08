@@ -35,20 +35,38 @@ void sio_ptr(StateIO *io, const u8 **pp)
 	SIO(io, kind); SIO(io, disk); SIO(io, off);
 	if (!io->saving && !io->err) {
 		if (kind == 1 && disk < g_num_disks && g_disks[disk]) *pp = g_disks[disk] + off;
-		else if (kind == 2) *pp = &g_inv_obj_data[0][0] + off;
+		else if (kind == 2) {
+			if (io->ver < 2) off = (off / 64) * INV_OBJ_MAX + off % 64;   /* v1: inventory object code had a 64-byte stride */
+			*pp = &g_inv_obj_data[0][0] + off;
+		}
 		else *pp = NULL;
 	}
 }
 
 #define MAGIC 0x5653494D            /* "MISV" */
-#define VERSION 1
 static void header(StateIO *io, u32 *sig, s32 *room)
 {
-	u32 magic = MAGIC, ver = VERSION, sz[3] = { sizeof(Slot), sizeof(RoomObject), sizeof(Actor) };
+	u32 magic = MAGIC, ver = STATE_VERSION, sz[3] = { sizeof(Slot), sizeof(RoomObject), sizeof(Actor) };
 	SIO(io, magic); SIO(io, ver); SIO(io, sz); SIO(io, *sig); SIO(io, *room);
-	if (!io->saving && (magic != MAGIC || ver != VERSION || sz[0] != sizeof(Slot) || sz[1] != sizeof(RoomObject) || sz[2] != sizeof(Actor))) io->err = 1;
+	io->ver = io->saving ? STATE_VERSION : (int)ver;
+	if (!io->saving && (magic != MAGIC || ver < 1 || ver > STATE_VERSION || sz[0] != sizeof(Slot) || sz[1] != sizeof(RoomObject) || sz[2] != sizeof(Actor))) io->err = 1;
 }
 static u32 game_sig(void) { return (g_disk_sizes[0] ^ (g_n_script * 65537u) ^ (g_n_cost * 257u)) + (u32)g_num_disks; }   /* demo and retail saves never mix */
+
+/* v1 -> v2: v1 kept only the first 64 bytes of an inventory object's code; restore the full code from the game data
+ * (object code is static, only the owner/state byte changes).  Running slots point into these buffers by offset. */
+static void migrate_v1_inventory(void)
+{
+	for (int i = 1; i < NUM_INVENTORY; i++) {
+		int id = g_inventory[i]; if (!id) continue;
+		for (int r = 1; r < 256; r++) for (int n = 0;; n++) {
+			u32 sz; const u8 *oc = res_room_block(r, "OC", n, &sz); if (!oc) break;
+			if ((int)rd16(oc + 6) != id) continue;
+			if (sz > INV_OBJ_MAX) sz = INV_OBJ_MAX;
+			memcpy(g_inv_obj_data[i], oc, sz); r = 256; break;
+		}
+	}
+}
 
 static void body(StateIO *io)
 {
@@ -99,6 +117,7 @@ static int state_load_raw(const u8 *data, u32 len)
 	g_room = room; if (room) eng_load_room_data(room);      /* resources first; the streamed state then overwrites the room's defaults */
 	body(&io);
 	if (io.err) return -2;
+	if (io.ver < 2) migrate_v1_inventory();
 	eng_state_done(); ui_state_done();
 	return 0;
 }

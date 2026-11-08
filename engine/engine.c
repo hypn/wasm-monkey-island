@@ -511,7 +511,12 @@ void eng_init(void)
 void eng_state(StateIO *io)
 {
 	SIO(io, g_cam_cur); SIO(io, g_cam_dest); SIO(io, g_cam_follow);
-	SIO(io, g_inventory); SIO(io, g_inv_obj_data); SIO(io, g_pseudo_room); SIO(io, g_room_pal); SIO(io, g_effect);
+	SIO(io, g_inventory);
+	if (!io->saving && io->ver < 2) {                      /* v1: 80 x 64-byte inventory object code (migrated in state.c) */
+		u8 old[NUM_INVENTORY][64]; SIO(io, old); memset(g_inv_obj_data, 0, sizeof g_inv_obj_data);
+		for (int i = 0; i < NUM_INVENTORY; i++) memcpy(g_inv_obj_data[i], old[i], 64);
+	} else SIO(io, g_inv_obj_data);
+	 SIO(io, g_pseudo_room); SIO(io, g_room_pal); SIO(io, g_effect);
 	SIO(io, g_obj_owner); SIO(io, g_obj_class); SIO(io, g_obj_names_over); SIO(io, g_obj_has_name_over);
 	SIO(io, g_nboxes); SIO(io, g_boxes); sio_ptr(io, &g_box_matrix); sio_ptr(io, &g_box_matrix_end);
 	SIO(io, g_nobjs);
