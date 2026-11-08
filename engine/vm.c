@@ -39,6 +39,21 @@ static inline u8 fetch8(void) { return code_base[pc++]; }
 static inline s16 fetch16(void) { s16 v = (s16)(code_base[pc] | (code_base[pc + 1] << 8)); pc += 2; return v; }
 static void skip16(void) { pc += 2; }                         /* FUN_1000_5d3a */
 
+/* Inline script text (ScummVM resStrLen): 0-terminated; an 0xFF escape is `FF <code>` followed by a 16-bit operand
+ * for every code except 1 (newline), 2 (keep text), 3 (wait) and 8 (verb-line newline). Returns the byte count incl. the 0. */
+static int fetch_inline_text(u8 *buf, int max)
+{
+	int n = 0; u8 c;
+	do {
+		c = fetch8(); if (n < max - 1) buf[n++] = c;
+		if (c == 0xFF) {
+			u8 code = fetch8(); if (n < max - 1) buf[n++] = code;
+			if (code != 1 && code != 2 && code != 3 && code != 8) for (int i = 0; i < 2; i++) { u8 b = fetch8(); if (n < max - 1) buf[n++] = b; }
+		}
+	} while (c);
+	buf[n - 1 < 0 ? 0 : n - 1] = 0; return n;
+}
+
 /* ---- variables (FUN_1000_64d4 / FUN_1000_6596) ---- */
 static s16 get_var(u16 idx)
 {
@@ -539,11 +554,7 @@ static void op_lights(void)                                       /* 836c: 0x70 
 static void op_set_object_name(void)                              /* 83ba: 0x54 */
 {
 	int obj = var_or_word(0x80);
-	u8 buf[256]; int n = 0; u8 c;
-	do {
-		c = fetch8(); if (n < 250) buf[n++] = c;
-		if (c == 0xFF) { for (int i = 0; i < 3; i++) if (n < 250) buf[n++] = fetch8(); }
-	} while (c != 0);
+	u8 buf[256]; int n = fetch_inline_text(buf, 250);
 	eng_set_object_name(obj, buf, n);
 }
 static void op_nop(void) { }                                      /* 8430: 0x22 */
@@ -586,8 +597,7 @@ static void op_verb_ops(void)                                     /* 8646: 0x7a 
 		switch (sub) {
 		case 1: a = var_or_word(0x80); break;                      /* image (object) */
 		case 2: { /* name: inline text */
-			u8 buf[256]; int n = 0; u8 c;
-			do { c = fetch8(); if (n < 250) buf[n++] = c; if (c == 0xFF) for (int i = 0; i < 3; i++) if (n < 250) buf[n++] = fetch8(); } while (c);
+			u8 buf[256]; int n = fetch_inline_text(buf, 250);
 			eng_verb_op(slot_v, 2, 0, 0, buf, n, 0); continue; }
 		case 3: a = var_or_byte(0x80); break;                      /* color */
 		case 4: a = var_or_byte(0x80); break;                      /* hicolor */
@@ -612,8 +622,7 @@ static void op_string_ops(void)                                   /* 89be: 0x27 
 	opcode = fetch8(); int sub = opcode & 0x1f;
 	if (sub == 1) {
 		int s = var_or_byte(0x80);
-		u8 buf[256]; int n = 0; u8 c;
-		do { c = fetch8(); if (n < 250) buf[n++] = c; if (c == 0xFF) for (int i = 0; i < 3; i++) if (n < 250) buf[n++] = fetch8(); } while (c);
+		u8 buf[256]; int n = fetch_inline_text(buf, 250);
 		eng_string_op(1, s, 0, 0, buf); (void)n;
 	} else if (sub == 2) { int a = var_or_byte(0x80), b = var_or_byte(0x40); eng_string_op(2, a, b, 0, NULL); }
 	else if (sub == 3) { int a = var_or_byte(0x80), b = var_or_byte(0x40), c = var_or_byte(0x20); eng_string_op(3, a, b, c, NULL); }
@@ -896,19 +905,7 @@ void vm_do_override(void)
 typedef struct { s16 x, y; s16 color, center, overhead, clip, charset; } PrintState;
 static PrintState ps_saved[4] = { {0,0,15,0,0,0,0},{0,0,15,0,0,0,0},{0,0,15,0,0,0,0},{0,0,15,0,0,0,0} };
 int g_print_actor;
-static int read_text(u8 *buf, int max)
-{
-	int n = 0; u8 c;
-	do {
-		c = fetch8(); if (n < max - 4) buf[n++] = c;
-		if (c == 0xFF) {
-			u8 code = fetch8(); if (n < max - 4) buf[n++] = code;
-			if (code >= 4 && code <= 7) { for (int i = 0; i < 2; i++) { u8 b = fetch8(); if (n < max - 4) buf[n++] = b; } }
-			if (code == 0 ) {}
-		}
-	} while (c != 0);
-	return n;
-}
+static int read_text(u8 *buf, int max) { return fetch_inline_text(buf, max); }
 void vm_print_ops(void)
 {
 	int slot = g_print_actor == 252 ? 3 : g_print_actor == 253 ? 2 : g_print_actor == 254 ? 1 : 0;

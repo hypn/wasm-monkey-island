@@ -32,7 +32,7 @@ static int cs_string_w(int cs, const u8 *s, int len)
 {
 	int w = 1;
 	for (int i = 0; i < len && s[i] && s[i] != 0xD; i++) {
-		if (s[i] == 0xFF || s[i] == 0xFE) { u8 c = s[++i]; if (c == 1 || c == 3 || c == 8) return w; continue; }
+		if (s[i] == 0xFF || s[i] == 0xFE) { u8 c = s[++i]; if (c == 1 || c == 3 || c == 8) return w; if (c == 12) i += 2; continue; }
 		if (s[i] == '@') continue;
 		w += cs_char_w(cs, s[i]);
 	}
@@ -70,13 +70,18 @@ static void expand_codes(const u8 *in, int len, u8 *out, int *olen)
 		if (c == 0xFF) {
 			u8 code = in[++i];
 			if (code >= 4 && code <= 7) {
-				extern int vm_read_var(u16); int var = vm_read_var(rd16(in + i + 1)); i += 2;
+				extern int vm_read_var(u16); u16 opnd = (u16)rd16(in + i + 1); int var = code == 7 ? opnd : vm_read_var(opnd); i += 2;   /* FF 07 <n>: n is the string slot itself (ScummVM convertStringMessage, v4/v5), not a variable */
 				char tmp[16];
 				if (code == 4) { snprintf(tmp, sizeof tmp, "%d", var); for (char *p = tmp; *p; p++) out[o++] = (u8)*p; }
-				else if (code == 6) { const u8 *n = eng_obj_name(var); for (; *n && o < 500; n++) if (*n != '@') out[o++] = *n; }
+				else if (code == 6) { const u8 *n = (var > 0 && var <= g_vars[VAR_NUM_ACTOR] && var < 13) ? (const u8 *)g_actors[var].name : eng_obj_name(var);   /* getObjOrActorName: ids <= numActors are actors */
+					 for (; *n && o < 500; n++) if (*n != '@') out[o++] = *n; }
 				else if (code == 5) { extern const u8 *eng_verb_name(int); const u8 *n = eng_verb_name(var); if (n) for (; *n && o < 500; n++) out[o++] = *n; }
 				else { extern const u8 *eng_string_ptr(int); const u8 *n = eng_string_ptr(var); if (n) for (; *n && o < 500; n++) out[o++] = *n; }
-			} else { out[o++] = 0xFF; out[o++] = code; }
+			} else if (code == 12) {                                   /* FF 0C <u16 colour> (ScummVM handleNextCharsetCode): 0xFF = back to the default colour. Kept as FF 0C hi lo, each nibble|0x80 so no byte is 0 or 0xFF */
+				int col = rd16(in + i + 1) & 0xFF; i += 2;
+				out[o++] = 0xFF; out[o++] = 12; out[o++] = (u8)(0x80 | (col >> 4)); out[o++] = (u8)(0x80 | (col & 15));
+			} else if (code == 9 || code == 10 || code == 13 || code == 14) { i += 2; }   /* code + 16-bit operand (anim / sound / colour / charset): not implemented, but the operand must not be printed as text */
+			else { out[o++] = 0xFF; out[o++] = code; }
 			continue;
 		}
 		if (c == '@') continue;
@@ -106,16 +111,21 @@ static void draw_lines(u8 *dst, int dst_h, const u8 *s, int x, int y, int color,
 	u8 line[512]; int ll = 0;
 	int maxw = right - x; if (center) { int half = x < (320 - x) ? x : (320 - x); maxw = half * 2; }
 	if (maxw < 40) maxw = 40;
-	int cx = x, cy = y;
+	int cx = x, cy = y, cur = color;       /* current colour: persists across lines until the next FF 0C */
 	const u8 *p = s;
 	while (*p) {
 		/* take next line: up to explicit newline or width */
-		ll = 0; int lastsp = -1; int w = 1; const u8 *q = p;
+		ll = 0; int lastsp = -1; const u8 *lastsp_q = NULL; int w = 1; const u8 *q = p;
 		while (*q) {
-			if (*q == 0xFF) { u8 c = q[1]; if (c == 1 || c == 8 || c == 3 || c == 2) { q += 2; break; } q += 2; continue; }
+			if (*q == 0xFF) {
+				u8 c = q[1];
+				if (c == 1 || c == 8 || c == 3 || c == 2) { q += 2; break; }
+				if (c == 12 && q[2] && q[3]) { if (ll + 4 < (int)sizeof line) { memcpy(line + ll, q, 4); ll += 4; } q += 4; continue; }   /* colour change: zero width */
+				q += 2; continue;
+			}
 			int cw = cs_char_w(cs, *q);
-			if (w + cw > maxw && lastsp >= 0) { ll = lastsp; q = p + lastsp + 1; goto emit; }
-			if (*q == ' ') lastsp = ll;
+			if (w + cw > maxw && lastsp >= 0) { ll = lastsp; q = lastsp_q + 1; goto emit; }
+			if (*q == ' ') { lastsp = ll; lastsp_q = q; }
 			line[ll++] = *q; w += cw; q++;
 		}
 		/* fallthrough: line ended by newline/end */
@@ -126,7 +136,10 @@ static void draw_lines(u8 *dst, int dst_h, const u8 *s, int x, int y, int color,
 			int lx = center ? x - lw / 2 : x;
 			if (lx < 0) lx = 0; if (lx + lw > 320) lx = 320 - lw; if (lx < 0) lx = 0;
 			int px = lx;
-			for (int i = 0; i < ll; i++) { cs_draw_char(dst, SCREEN_W, dst_h, cs, line[i], px, cy, color); px += cs_char_w(cs, line[i]); }
+			for (int i = 0; i < ll; i++) {
+				if (line[i] == 0xFF) { int c = ((line[i + 2] & 15) << 4) | (line[i + 3] & 15); cur = c == 0xFF ? color : c; i += 3; continue; }
+				cs_draw_char(dst, SCREEN_W, dst_h, cs, line[i], px, cy, cur); px += cs_char_w(cs, line[i]);
+			}
 			cy += h; (void)cx;
 		}
 		p = q;
@@ -176,7 +189,7 @@ void txt_update(void)                        /* FUN_1000_9b64 */
 		/* display */
 		u8 stripped[512]; int sl = 0, i = 0; int keep_after = 0; int wait_after = 0;
 		for (i = 0; i < msg_len; i++) {
-			if (msg[i] == 0xFF) { u8 c = msg[++i]; if (c == 3) { wait_after = 1; break; } if (c == 2) { keep_after = 1; break; } if (c == 1 || c == 8) { stripped[sl++] = 0xFF; stripped[sl++] = 1; } continue; }
+			if (msg[i] == 0xFF) { u8 c = msg[++i]; if (c == 3) { wait_after = 1; break; } if (c == 2) { keep_after = 1; break; } if (c == 1 || c == 8) { stripped[sl++] = 0xFF; stripped[sl++] = 1; } else if (c == 12) { stripped[sl++] = 0xFF; stripped[sl++] = 12; stripped[sl++] = msg[i + 1]; stripped[sl++] = msg[i + 2]; i += 2; } continue; }
 			stripped[sl++] = msg[i];
 		}
 		stripped[sl] = 0;
@@ -227,7 +240,7 @@ static u8 vn_tmp[512];
 const u8 *eng_verb_name(int id) { int v = find_verb(id, 0); if (!v) return NULL; int n; verb_text(&verbs[v], vn_tmp, &n); return vn_tmp; }
 static void verb_text(const VerbSlot *v, u8 *out, int *n)
 {
-	int l = 0; while (l < 127 && v->name[l]) { if (v->name[l] == 0xFF) l += (v->name[l + 1] >= 4 && v->name[l + 1] <= 7) ? 4 : 2; else l++; }
+	int l = 0; while (l < 127 && v->name[l]) { if (v->name[l] == 0xFF) l += (v->name[l + 1] >= 4 && v->name[l + 1] <= 7) || (v->name[l + 1] >= 9 && v->name[l + 1] != 11) ? 4 : 2; else l++; }
 	expand_codes(v->name, l, out, n);
 }
 static void verb_erase_rect(VerbSlot *v)
