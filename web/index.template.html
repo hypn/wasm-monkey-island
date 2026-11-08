@@ -17,6 +17,11 @@
   #escbtn:active { background:#a455c0; }
   #menubtn:hover:not(:disabled) { background:#40c4ce; }
   #menubtn:disabled { opacity:.45; cursor:default; }
+  #dbglink { color:#9ab; }
+  #dbg { border:1px solid #3ac; border-radius:10px; background:#12121c; color:var(--fg); padding:14px 16px; width:min(92vw,760px); max-height:86vh; }
+  #dbg::backdrop { background:rgba(0,0,0,.6); }
+  #dbg h3 { margin:0 0 8px; } #dbg pre { margin:8px 0; padding:8px; background:#07070d; border:1px solid #333; border-radius:6px; max-height:48vh; overflow:auto; font:12px/1.35 ui-monospace,monospace; white-space:pre-wrap; word-break:break-all; }
+  #dbg .row { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; } #dbg button { font:inherit; color:#fff; background:#1e8e98; border:1px solid #3ac; border-radius:6px; padding:3px 12px; cursor:pointer; }
   #bar { display:flex; gap:12px; align-items:center; flex-wrap:wrap; justify-content:center; }
   /* touch devices: the game fills the screen; buttons sit beside it (landscape) or under it (portrait); no hint text */
   body.mobile { position:fixed; inset:0; width:100%; height:100dvh; overflow:hidden; gap:0; padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
@@ -41,7 +46,10 @@
 <body>
 <div id="wrap"><canvas id="screen" width="320" height="200" tabindex="0"></canvas></div>
 <div id="status">Loading…</div>
-<div id="bar"><button id="escbtn" hidden title="Skip cutscene / cancel (Esc)">Esc</button><button id="menubtn" disabled title="Save / load (F5)"><span class="k">F5 &nbsp;</span>Save / Load</button><small>ESC skips cutscenes. Saves go to browser storage. Music: the AdLib theme plays once you have clicked or pressed a key (browser autoplay rules).</small></div>
+<dialog id="dbg"><h3>Debug info</h3><pre id="dbgsum"></pre>
+  <details><summary>Full JSON (state, actors, scripts, inventory, objects, variables, flags, save data)</summary><pre id="dbgjson"></pre></details>
+  <div class="row"><button id="dbgrefresh">Refresh</button><button id="dbgcopy">Copy JSON</button><button id="dbgdl">Download</button><button id="dbgclose">Close</button></div></dialog>
+<div id="bar"><button id="escbtn" hidden title="Skip cutscene / cancel (Esc)">Esc</button><button id="menubtn" disabled title="Save / load (F5)"><span class="k">F5 &nbsp;</span>Save / Load</button><small>ESC skips cutscenes. Saves go to browser storage. Music: the AdLib theme plays once you have clicked or pressed a key (browser autoplay rules).</small> <small><a href="#" id="dbglink">[debug]</a></small></div>
 <script>
 /*__DATA__*/
 </script>
@@ -97,6 +105,7 @@
     canvas.addEventListener('contextmenu', e => e.preventDefault());
     const keymap = { Escape: 27, Enter: 13, Backspace: 8, Tab: 9, ' ': 32, F1: 315, F2: 316, F3: 317, F4: 318, F5: 319, F6: 320, F7: 321, F8: 322, F9: 323, F10: 324 };
     window.addEventListener('keydown', e => {
+      if (document.getElementById('dbg').open) return;   // debug dialog: keys go to the dialog, not the game
       let k = keymap[e.key]; if (k === undefined && e.key.length === 1) k = e.key.charCodeAt(0);
       if (k !== undefined) { mod._mi_key(k); e.preventDefault(); }
     });
@@ -130,6 +139,38 @@
     const escBtn = document.getElementById('escbtn'); escBtn.hidden = !isMobile;
     escBtn.addEventListener('click', () => { mod._mi_key(27); startAudio(); escBtn.blur(); });
     const menuBtn = document.getElementById('menubtn');
+    // ---- [debug] dialog: snapshot of engine state as JSON (+ the packed save so a situation can be reproduced) ----
+    const dbg = document.getElementById('dbg'); let dbgData = null;
+    const dbgB64 = (p, n) => { let s = ''; const h = mod.HEAPU8; for (let o = 0; o < n; o += 8192) s += String.fromCharCode.apply(null, h.subarray(p + o, p + Math.min(n, o + 8192))); return btoa(s); };
+    function collectDebug() {
+      const p = mod._mi_debug_json(); const h = mod.HEAPU8; let e = p; while (h[e]) e++;
+      const d = JSON.parse(new TextDecoder().decode(h.subarray(p, e)));
+      const sp = mod._mi_debug_save(), sn = mod._mi_debug_save_len();
+      d.save_b64 = sp ? dbgB64(sp, sn) : null;
+      d.client = { url: location.href, ua: navigator.userAgent, viewport: [innerWidth, innerHeight], dpr: devicePixelRatio, frames: window.__frames, time: new Date().toISOString() };
+      return d;
+    }
+    function showDebug() {
+      const d = dbgData = collectDebug(), ego = d.actors.find(a => a.id === d.ego);
+      const sum = ['room ' + d.room + ' (' + d.room_name + ')  size ' + d.room_size.join('x') + '  camera ' + d.camera.cur + ' -> ' + d.camera.dest + ' (follow ' + d.camera.follow + ')',
+        'ego (actor ' + d.ego + '): ' + (ego ? 'room ' + ego.room + ' at ' + ego.x + ',' + ego.y + ' facing ' + ego.facing + ' box ' + ego.box + (ego.moving ? ' moving' : '') : '?'),
+        'mouse screen ' + d.mouse.screen.join(',') + '  room-view ' + d.mouse.virt.join(','),
+        'input ' + (d.input_enabled ? 'enabled' : 'disabled') + '  cutscene slot ' + (d.cutscene_slot === 255 ? 'none' : d.cutscene_slot) + '  talking actor ' + d.talk_actor + '  ticks ' + d.ticks,
+        'scripts running: ' + (d.scripts.map(s => s.script + (s.where === 1 ? '(obj)' : '') ).join(', ') || 'none'),
+        'inventory: ' + (d.inventory.map(i => i.name + '#' + i.id).join(', ') || 'empty'),
+        'objects here: ' + (d.objects.map(o => (o.name || '?') + '#' + o.id + (o.state ? ' s' + o.state : '')).join(', ') || 'none'),
+        'vars set: ' + Object.keys(d.vars).length + '  flags set: ' + d.bits_set.length + '  save data: ' + (d.save_b64 ? d.save_b64.length + ' chars' : 'n/a'),
+        'page ' + d.client.url].join('\n');
+      document.getElementById('dbgsum').textContent = sum;
+      document.getElementById('dbgjson').textContent = JSON.stringify(d, null, 1);
+      if (!dbg.open) dbg.showModal();
+    }
+    document.getElementById('dbglink').addEventListener('click', e => { e.preventDefault(); showDebug(); });
+    document.getElementById('dbgrefresh').addEventListener('click', showDebug);
+    document.getElementById('dbgclose').addEventListener('click', () => { dbg.close(); canvas.focus(); });
+    dbg.addEventListener('click', e => { if (e.target === dbg) { dbg.close(); canvas.focus(); } });
+    document.getElementById('dbgcopy').addEventListener('click', async e => { const t = JSON.stringify(dbgData); try { await navigator.clipboard.writeText(t); e.target.textContent = 'Copied'; } catch (_) { const r = document.createRange(); r.selectNodeContents(document.getElementById('dbgjson')); getSelection().removeAllRanges(); getSelection().addRange(r); e.target.textContent = 'Select+Ctrl-C'; } setTimeout(() => e.target.textContent = 'Copy JSON', 1500); });
+    document.getElementById('dbgdl').addEventListener('click', () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(dbgData, null, 1)], { type: 'application/json' })); a.download = 'monkey-debug-room' + dbgData.room + '.json'; a.click(); });
     menuBtn.addEventListener('click', () => { if (!menuBtn.disabled) { mod._mi_key(319); } menuBtn.blur(); canvas.focus(); });
     window.__mi = mod; window.__frames = 0;
     let last = performance.now(), acc = 0; window.__speed = 1;   // test hook (set from the console / test driver), not a URL option

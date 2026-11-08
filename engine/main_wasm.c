@@ -2,6 +2,7 @@
  * and drives the engine one frame at a time. */
 #include "engine.h"
 #include <stdlib.h>
+#include <stdarg.h>
 #include <emscripten.h>
 
 extern u32 g_rgb[]; extern void eng_frame(void); extern void eng_init(void);
@@ -97,3 +98,57 @@ int plat_save_put(int slot, const char *meta, const u8 *data, u32 len) { return 
 int plat_save_meta(int slot, char *out, int max) { return js_save_meta(slot, out, max); }
 int plat_save_get(int slot, u8 *out, u32 max) { return js_save_get(slot, out, (int)max); }
 void plat_timestamp(char *out, int max) { js_timestamp(out, max); }
+
+/* ---- debug dump: JSON snapshot of the engine state for the page's [debug] dialog ---- */
+#include <stdio.h>
+#include <string.h>
+#include "state.h"
+extern char g_room_names[256][10];
+static char *dbg_buf; static size_t dbg_len, dbg_cap;
+static void dj(const char *fmt, ...)
+{
+	char tmp[512]; va_list ap; va_start(ap, fmt); int n = vsnprintf(tmp, sizeof tmp, fmt, ap); va_end(ap);
+	if (n < 0) return; if (n >= (int)sizeof tmp) n = sizeof tmp - 1;
+	if (dbg_len + n + 1 > dbg_cap) { dbg_cap = dbg_cap ? dbg_cap * 2 : 16384; while (dbg_cap < dbg_len + n + 1) dbg_cap *= 2; dbg_buf = realloc(dbg_buf, dbg_cap); }
+	memcpy(dbg_buf + dbg_len, tmp, n); dbg_len += n; dbg_buf[dbg_len] = 0;
+}
+static void djs(const char *s)      /* JSON string, printable ASCII only (names can hold control codes / '@' padding) */
+{
+	dj("\"");
+	for (; s && *s; s++) { unsigned char c = (unsigned char)*s; if (c == '@') continue; if (c == '"' || c == '\\') dj("\\%c", c); else if (c >= 32 && c < 127) dj("%c", c); else dj("\\u%04x", c); }
+	dj("\"");
+}
+EMSCRIPTEN_KEEPALIVE const char *mi_debug_json(void)
+{
+	dbg_len = 0; if (dbg_buf) dbg_buf[0] = 0;
+	extern int eng_get_state(int); extern int ui_input_enabled(void);
+	int ego = g_vars[VAR_EGO];
+	dj("{\"room\":%d,\"room_name\":", g_room); djs(g_room < 256 ? g_room_names[g_room] : ""); 
+	dj(",\"ticks\":%d,\"ego\":%d,\"input_enabled\":%d,\"cutscene_slot\":%d,\"have_msg\":%d,\"talk_actor\":%d",
+	   g_vars[VAR_TIMER_TOTAL], ego, ui_input_enabled(), g_cutscene_slot, g_vars[VAR_HAVE_MSG], g_vars[VAR_TALK_ACTOR]);
+	dj(",\"camera\":{\"cur\":%d,\"dest\":%d,\"follow\":%d},\"mouse\":{\"screen\":[%d,%d],\"virt\":[%d,%d]},\"room_size\":[%d,%d]",
+	   g_cam_cur, g_cam_dest, g_cam_follow, g_mouse_x, g_mouse_y, g_vars[VAR_VIRT_MOUSE_X], g_vars[VAR_VIRT_MOUSE_Y], g_room_w, g_room_h);
+	dj(",\"actors\":[");
+	for (int a = 0, first = 1; a < 13; a++) { Actor *p = &g_actors[a]; if (!p->used && !p->room && !p->costume) continue;
+		dj("%s{\"id\":%d,\"room\":%d,\"x\":%d,\"y\":%d,\"costume\":%d,\"facing\":%d,\"visible\":%d,\"moving\":%d,\"box\":%d,\"name\":", first ? "" : ",", a, p->room, p->x, p->y, p->costume, p->facing, p->visible, p->moving, p->walkbox);
+		djs(p->name); dj("}"); first = 0; }
+	dj("],\"scripts\":[");
+	for (int i = 0, first = 1; i < NUM_SLOTS; i++) { Slot *s = &g_slots[i]; if (s->status == SS_DEAD) continue;
+		dj("%s{\"slot\":%d,\"script\":%d,\"where\":%d,\"status\":%d,\"pc\":%u,\"delay\":%d}", first ? "" : ",", i, s->number, s->where, s->status, s->pc, s->delay); first = 0; }
+	dj("],\"inventory\":[");
+	for (int i = 1, first = 1; i < NUM_INVENTORY; i++) if (g_inventory[i]) { dj("%s{\"id\":%d,\"owner\":%d,\"name\":", first ? "" : ",", g_inventory[i], g_obj_owner[g_inventory[i]] & 15); djs((const char *)eng_obj_name(g_inventory[i])); dj("}"); first = 0; }
+	dj("],\"objects\":[");
+	for (int i = 0; i < g_nobjs; i++) { RoomObject *o = &g_objs[i];
+		dj("%s{\"id\":%d,\"state\":%d,\"owner\":%d,\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d,\"walk\":[%d,%d],\"name\":", i ? "," : "", o->id, eng_get_state(o->id), g_obj_owner[o->id] & 15, o->x, o->y, o->w, o->h, o->walk_x, o->walk_y);
+		djs((const char *)eng_obj_name(o->id)); dj("}"); }
+	dj("],\"vars\":{");
+	for (int i = 0, first = 1; i < NUM_VARS; i++) if (g_vars[i]) { dj("%s\"%d\":%d", first ? "" : ",", i, g_vars[i]); first = 0; }
+	dj("},\"bits_set\":[");
+	for (int i = 0, first = 1; i < NUM_BITVARS; i++) if (g_bitvars[i >> 3] & (1 << (i & 7))) { dj("%s%d", first ? "" : ",", i); first = 0; }
+	dj("]}");
+	return dbg_buf;
+}
+/* the complete save state (same bytes as a save slot, zero-run packed) so a bug can be reproduced exactly */
+static u8 *dbg_save; static u32 dbg_save_n;
+EMSCRIPTEN_KEEPALIVE const u8 *mi_debug_save(void) { free(dbg_save); dbg_save = NULL; dbg_save_n = 0; if (state_save(&dbg_save, &dbg_save_n)) { dbg_save = NULL; dbg_save_n = 0; } return dbg_save; }
+EMSCRIPTEN_KEEPALIVE int mi_debug_save_len(void) { return (int)dbg_save_n; }
