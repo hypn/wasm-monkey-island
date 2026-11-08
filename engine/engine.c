@@ -34,7 +34,7 @@ extern int  new_dir_to_old(int d);
 /* ---------- ownership / state ---------- */
 u8 *eng_owner_ptr(int obj) { return (obj > 0 && obj < NUM_OBJECTS) ? &g_obj_owner[obj] : NULL; }
 int eng_get_state(int obj) { u8 *p = eng_owner_ptr(obj); return p ? (*p >> 4) : 0; }
-void eng_set_owner_state(int obj, int v) { u8 *p = eng_owner_ptr(obj); if (getenv("TRACE_OBJ") && obj == atoi(getenv("TRACE_OBJ"))) fprintf(stderr, "   obj %d state<-%d (slot script %d)\n", obj, v >> 4, g_cur_slot < NUM_SLOTS ? g_slots[g_cur_slot].number : -1); if (p) *p = (u8)v; }
+void eng_set_owner_state(int obj, int v) { u8 *p = eng_owner_ptr(obj); if (getenv("TRACE_OBJ") && obj == atoi(getenv("TRACE_OBJ"))) fprintf(stderr, "   obj %d state<-%d (slot script %d)\n", obj, v >> 4, g_cur_slot < NUM_SLOTS ? g_slots[g_cur_slot].number : -1); if (p) { u8 old = *p; *p = (u8)v; if ((old >> 4) != (v >> 4) || 1) { extern void ui_clear_text_rect(int,int,int,int); for (int i = 0; i < g_nobjs; i++) if (g_objs[i].id == obj && g_objs[i].w && g_objs[i].h) ui_clear_text_rect(g_objs[i].x, g_objs[i].y, g_objs[i].w, g_objs[i].h); } } }   /* putState + markObjectRectAsDirty: the object's area is redrawn from the room, wiping text printed over it */
 
 /* ---------- objects of the current room ---------- */
 static RoomObject *find_room_obj(int obj)
@@ -165,6 +165,7 @@ void eng_redraw_object(int obj) { rebuild_bg(); g_screen_dirty = 1; }
 
 void eng_draw_object(int obj, int x, int y)    /* handler 7014 */
 {
+	{ RoomObject *ro = find_room_obj(obj); if (ro && ro->w && ro->h) { extern void ui_clear_text_rect(int,int,int,int); ui_clear_text_rect(ro->x, ro->y, ro->w, ro->h); } }
 	if (g_trace) fprintf(stderr, "   drawObject(%d,%d,%d) where=%d\n", obj, x, y, eng_obj_where(obj));
 	if (eng_obj_where(obj) != WIO_ROOM) return;
 	RoomObject *o = find_room_obj(obj);

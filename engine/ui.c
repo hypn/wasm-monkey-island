@@ -123,6 +123,15 @@ const char *ui_expanded(const u8 *raw)
 	static u8 buf[512]; int n = 0; if (!raw) return ""; int l = raw_text_len(raw); if (l > 500) l = 500;
 	expand_codes(raw, l, buf, &n); return (const char *)buf;
 }
+/* ScummVM restoreBackground(rect): redrawing a screen area from the room image also wipes text that was printed over it (print slot 1..3,
+ * kept speech). Room-pixel rectangle in, cleared from the text overlay. */
+void ui_clear_text_rect(int rx, int ry, int rw, int rh)
+{
+	int camx = g_cam_cur - 160; if (camx < 0) camx = 0; if (camx > g_room_w - 320) camx = g_room_w - 320; if (camx < 0) camx = 0;
+	int x0 = rx - camx, y0 = ry + g_view_top, x1 = x0 + rw, y1 = y0 + rh;
+	if (x0 < 0) x0 = 0; if (y0 < 0) y0 = 0; if (x1 > SCREEN_W) x1 = SCREEN_W; if (y1 > SCREEN_H) y1 = SCREEN_H;
+	for (int y = y0; y < y1; y++) for (int x = x0; x < x1; x++) g_txt[y * SCREEN_W + x] = 0xFF;
+}
 void txt_clear(void)
 {
 	if (msg_state || msg_timer) {
@@ -286,7 +295,8 @@ static void verb_text(const VerbSlot *v, u8 *out, int *n)
 /* A verb text can span several lines (FF 01 / FF 08 = new line, ScummVM drawString): every line starts at the verb's x
  * (or is centred on it) and the next one is one font height lower. Returns the bounding box of the whole text. */
 /* cosmetic: verbs placed flush against the left screen edge (dialog choices at x=0) get 2 px of padding so glyphs such as 'I' are not glued to the border */
-#define VERB_LEFT(v) ((v)->x + ((v)->x < 2 ? 2 : 0))
+#define IS_ARROW_VERB(v) ((v)->id == 107 || (v)->id == 108)    /* retail inventory / dialog scroll arrows (glyph tiles) */
+#define VERB_LEFT(v) ((v)->x + ((v)->x < 2 ? 2 : 0) - (IS_ARROW_VERB(v) ? 2 : 0))   /* arrows sit 2 px further left so they do not touch the first letter of the choices */
 static s16 verb_lh[NUM_VERBS + 1];      /* height of the last drawn text per verb slot (not part of the save: layout cache only) */
 static void verb_bounds(const VerbSlot *v, const u8 *t, int tn, int *bx, int *bw, int *bh)
 {
@@ -307,13 +317,14 @@ static void verb_erase_rect(VerbSlot *v)
 	for (int yy = v->y; yy < v->y + h && yy < SCREEN_H; yy++) for (int xx = x; xx < x + w && xx < SCREEN_W; xx++) if (xx >= 0 && yy >= 0) g_ui[yy * SCREEN_W + xx] = 0;
 	v->lvalid = 0;
 }
+static int verbs_precleared;     /* frame loop: every verb rectangle is cleared first, then all verbs are drawn (so a later verb never wipes an earlier one's pixels) */
 static void verb_draw(VerbSlot *v, int hover)
 {
 	if (!v->used || !v->on || v->saveid || !v->name[0]) return;
 	int color = v->on == 2 ? v->dimcolor : ((hover && v->hicolor) ? v->hicolor : v->color);      /* ac82: hover colour only if one was set */
 	u8 t[512]; int tn; verb_text(v, t, &tn);
 	int bx, bw, bh; verb_bounds(v, t, tn, &bx, &bw, &bh);
-	verb_erase_rect(v);
+	if (!verbs_precleared) verb_erase_rect(v);
 	v->lx = (s16)bx; v->lw = (s16)bw; verb_lh[v - verbs] = (s16)bh; v->lvalid = 1;
 	int cur = color, y = v->y;
 	for (const u8 *p = t; *p; ) {
@@ -483,7 +494,10 @@ void render_frame(void)
 		for (int x = 0; x < SCREEN_W; x++) { u8 p = g_ui[y * SCREEN_W + x]; if (p) scr[y * SCREEN_W + x] = p; }
 	}
 	/* verbs (hover colour) */
-	{ int hv = verb_at(g_mouse_x, g_mouse_y); for (int i = 1; i < NUM_VERBS; i++) if (verbs[i].used && verbs[i].on) verb_draw(&verbs[i], verbs[i].id == hv); }
+	{ int hv = verb_at(g_mouse_x, g_mouse_y); for (int i = 1; i < NUM_VERBS; i++) if (verbs[i].used && verbs[i].on) { u8 t[512]; int tn; (void)t; (void)tn; verb_erase_rect(&verbs[i]); }
+	  verbs_precleared = 1;
+	  for (int pass = 0; pass < 2; pass++) for (int i = 1; i < NUM_VERBS; i++) if (verbs[i].used && verbs[i].on && (pass == 0) == (IS_ARROW_VERB(&verbs[i]) != 0)) verb_draw(&verbs[i], verbs[i].id == hv);
+	  verbs_precleared = 0; }   /* arrows first, text on top of them */
 	/* text overlay */
 	for (int i = 0; i < SCREEN_W * SCREEN_H; i++) if (g_txt[i] != 0xFF) scr[i] = g_txt[i];
 #ifndef JS_CURSOR
