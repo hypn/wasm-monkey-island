@@ -163,8 +163,10 @@ void costume_draw_actors(u8 *screen, int cam_x, int view_top)
 	for (int k = 0; k < n; k++) {
 		Actor *a = &g_actors[order[k]]; CostumeInfo c;
 		if (!load_costume(a->costume, &c)) continue;
-		int mirror = (a->facing & 3) == 0;      /* verified visually: west (0) is the mirrored direction */
-		if (c.format & 0x80) mirror = !mirror;
+		/* ScummVM ClassicCostumeRenderer::setFacing: _drawActorToRight = (oldDir != 0) || (format & 0x80), i.e. only a WEST-facing actor of a
+		 * costume WITHOUT the 0x80 flag is mirrored; 0x80 costumes (the Swordmaster, costume 107; 47) are never mirrored. The earlier
+		 * `facing==0 XOR flag` also mirrored them when facing east/south/north. */
+		int mirror = (a->facing & 3) == 0 && !(c.format & 0x80);
 		int xm = 0, ym = 0; walk_setup_scale(a); a->hvalid = 0;
 		{ /* ScummVM Actor::drawActorCostume: zbuf = the walkbox's mask value (forced to >= 1 for AlwaysClip), clamped to the planes present */
 		  int z = (a->walkbox < g_nboxes) ? g_boxes[a->walkbox].mask : 0;
