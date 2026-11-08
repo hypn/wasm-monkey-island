@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-extern u8 *g_mask; extern int g_room_w, g_room_h;
+extern u8 *g_mask, *g_masks[4]; extern int g_room_w, g_room_h;
 extern u32 g_rgb[]; extern void eng_frame(void); extern void ui_init(void);
 extern int g_charset_id;
 static u8 *rdf(const char *p, u32 *n) { FILE *f = fopen(p, "rb"); if (!f) { fprintf(stderr, "cannot open %s\n", p); exit(1); } fseek(f, 0, SEEK_END); *n = (u32)ftell(f); rewind(f); u8 *b = malloc(*n); if (fread(b, 1, *n, f) != *n) exit(1); fclose(f); return b; }
@@ -39,6 +39,7 @@ int main(int argc, char **argv)
 		if (getenv("SNDSTART")) { char *c = strdup(getenv("SNDSTART")); for (char *t = strtok(c, ","); t; t = strtok(NULL, ",")) { int ff, id; if (sscanf(t, "%d:%d", &ff, &id) == 2 && ff == f) eng_sound_start(id); } free(c); }
 		if (getenv("SEQ")) { char *c = strdup(getenv("SEQ")); for (char *t = strtok(c, ","); t; t = strtok(NULL, ",")) { int ff, o, r; if (sscanf(t, "%d:%d:%d", &ff, &o, &r) == 3 && ff == f) { extern void eng_load_room_with_ego(int,int,int,int); eng_load_room_with_ego(o, r, -1, -1); } } free(c); }
 		if (getenv("GOTO") && f == 1300) { extern void eng_load_room_with_ego(int,int,int,int); int r = atoi(getenv("GOTO")); g_actors[1].room = r; eng_start_room(r); act_put(1, getenv("EX")?atoi(getenv("EX")):160, getenv("EY")?atoi(getenv("EY")):110, r); eng_follow_actor(1); }
+		if (getenv("ECOST") && f == 1301) { g_actors[1].costume = atoi(getenv("ECOST")); extern void act_start_anim(int,int); act_start_anim(1, g_actors[1].stand_frame * 4 + 0); }
 		if (getenv("WALKOBJ") && f == 800) { extern void act_walk_to_obj(int,int); act_walk_to_obj(1, atoi(getenv("WALKOBJ"))); }
 		if (getenv("TXTTEST") && f == 2000) { extern void eng_string_op(int,int,int,int,const u8*); extern void txt_print(int,int,const u8*,int,int,int,int,int,int,int,int,int); eng_string_op(1, 24, 0, 0, (const u8 *)"Soon you'll be wearing my sword!"); static const u8 t[] = { 0xFF, 7, 24, 0 }; txt_print(0, 1, t, 4, 160, 40, 15, 1, 1, 0, 0, 0); if (getenv("TXTTEST")[0] == 'f') { static const u8 c[] = "Of course I have a helmet. What sort of idiot do \xfe\x08     you take me for?"; txt_print(0, 0xFF, c, sizeof c, 160, 60, 15, 1, 0, 0, 0, 0); }
 		if (getenv("TXTTEST")[0] == 'c') { static const u8 c[] = { 'H','e','l','l','o',' ',0xFF,12,0x0B,0x00,'c','y','a','n',' ',0xFF,12,0x04,0x00,'r','e','d',0xFF,12,0xFF,0x00,' ','w','h','i','t','e',' ','a','n','d',' ','s','o',' ','l','o','n','g',' ','t','h','a','t',' ','i','t',' ','w','r','a','p','s',' ','o','n','t','o',' ','a','n','o','t','h','e','r',' ','l','i','n','e',0 }; txt_print(0, 0xFF, c, sizeof c, 160, 60, 15, 1, 0, 0, 0, 0); } }
@@ -59,7 +60,7 @@ int main(int argc, char **argv)
 	snprintf(p, sizeof p, "%s_last.ppm", out); dump_ppm(p);
 	if (getenv("DUMPMASK") && g_mask) { /* overlay the foreground mask (red) on the room background */
 		FILE *f = fopen("/tmp/mask.ppm", "wb"); fprintf(f, "P6\n%d %d\n255\n", g_room_w, g_room_h);
-		for (int y = 0; y < g_room_h; y++) for (int x = 0; x < g_room_w; x++) { int m = g_mask[y * g_room_w + x]; const unsigned char *c = g_ega_palette[g_bg[y * g_room_w + x] & 15]; fputc(m ? 255 : c[0] / 2, f); fputc(m ? 0 : c[1] / 2, f); fputc(m ? 0 : c[2] / 2, f); }
+		for (int y = 0; y < g_room_h; y++) for (int x = 0; x < g_room_w; x++) { int m = g_masks[getenv("MASKPLANE") ? atoi(getenv("MASKPLANE")) : 1][y * g_room_w + x]; const unsigned char *c = g_ega_palette[g_bg[y * g_room_w + x] & 15]; fputc(m ? 255 : c[0] / 2, f); fputc(m ? 0 : c[1] / 2, f); fputc(m ? 0 : c[2] / 2, f); }
 		fclose(f);
 	}
 	if (wav) { u32 rate = 49716, bytes = wav_n * 2; u8 h[44]; memcpy(h, "RIFF", 4); u32 v = 36 + bytes; memcpy(h + 4, &v, 4); memcpy(h + 8, "WAVEfmt ", 8); v = 16; memcpy(h + 16, &v, 4); u16 t = 1; memcpy(h + 20, &t, 2); memcpy(h + 22, &t, 2); memcpy(h + 24, &rate, 4); v = rate * 2; memcpy(h + 28, &v, 4); t = 2; memcpy(h + 32, &t, 2); t = 16; memcpy(h + 34, &t, 2); memcpy(h + 36, "data", 4); memcpy(h + 40, &bytes, 4); fseek(wav, 0, SEEK_SET); fwrite(h, 1, 44, wav); fclose(wav); }

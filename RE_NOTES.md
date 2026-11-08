@@ -57,6 +57,7 @@ EGA RLE (high bit: run / copy-left; 0x40: two-colour alternating nibble run; els
 * Mirroring is `FUN_1000_d1d6`; west/east share the same pictures (anim `n*4+dir`).
 
 ## Foreground masks (z-order of actors vs objects)
+**Several planes:** a `BM` (room) or `OI` (object) holds a chain of mask planes after the image (ScummVM `ZP01..ZP03`), each with its own `u16` total size (chain ends at size 0 / end of block). An actor is clipped against the plane numbered by its walkbox's `mask` value (clamped to the planes present; AlwaysClip with mask 0 uses plane 1; NeverClip none) - ScummVM `Actor::drawActorCostume` (`_zbuf = getMaskFromBox`). Engine: `g_masks[1..3]`, `g_nplanes`. The text below describes one plane.
 Each `OI` block carries, after the image data (`img + u16 size`), a mask: `u16 total`, `u16 per-strip offset` (relative to the mask start) then per strip a
 `decompressMaskImg`-style RLE: byte `b` with bit7 = run of `b&0x7f` rows of the next byte, else `b` literal rows. One byte = 8 pixels (MSB = left) of one row.
 Set bits are foreground that hides actors standing in a walkbox whose `mask` byte is non-zero (every box in the bar has mask 1). All-zero masks (`b0 00`) mean "no overlap".
@@ -122,7 +123,7 @@ headless Chrome: real clicks/keys, screenshots, set `window.__speed = N` in the 
 * Room `PA` block: u16 0x0300 then (after 8-byte block header + 2) 256 x RGB 8-bit (first colours are the standard VGA/EGA set). `g_vga` = room has a `PA` block; compositor uses `g_pal_rgb`.
 * Room `BM` / object `OI` images: `u32 total size, u32 offset per 8-px strip`; a strip = codec byte + first colour + LSB-first bit stream (codes 15-18 columns, 26-28 rows; code%10 = absolute-colour bits). Strips are the **HD height tall (can be 200, not only 144)**: decoding only 144 rows of a column-coded strip desynchronises the stream (vertical streak garbage). Our decoder is `gfx_decode_strip_vga`.
 * Costumes: retail uses the same classic format byte 0x58 (16-entry palette, `0xd8` = mirrored) - the palette bytes are simply full VGA indices, so only the `& 15` in `pixel_color` had to go. Verified on the lookout pirate.
-* Not yet for VGA: foreground mask planes (disabled when `g_vga`), actorOps sub 0x0d stores the raw index when `g_vga` (the demo EXE multiplies by 0x11 = EGA nibble pair; retail never used it in the intro, unverified against MONKEY.EXE - unpacked retail EXE is 112107 bytes vs demo 112075 but recompiled, not a patch), `CC` palette cycling, object `OI` layout check, actor palettes.
+* Not yet for VGA: (foreground mask planes now work, see BUGS C26) actorOps sub 0x0d stores the raw index when `g_vga` (the demo EXE multiplies by 0x11 = EGA nibble pair; retail never used it in the intro, unverified against MONKEY.EXE - unpacked retail EXE is 112107 bytes vs demo 112075 but recompiled, not a patch), `CC` palette cycling, object `OI` layout check, actor palettes.
 
 ## Retail EXE vs demo EXE (session 3)
 * `MONKEY.EXE` unpacks with the same LZEXE91 unpacker (112107 bytes vs demo 112075), recompiled (code layout differs, not a patch).

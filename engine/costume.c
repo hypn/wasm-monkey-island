@@ -109,8 +109,8 @@ static int pixel_color(const Actor *a, const CostumeInfo *c, int idx)
 	return g_vga ? (col & 0xFF) : (col & 15);   /* retail: costume palette entries are full VGA indices */
 }
 
-extern u8 *g_mask; extern int g_room_w;
-static int g_clip_mask;
+extern u8 *g_masks[4]; extern int g_nplanes; extern int g_room_w;
+static int g_clip_mask;               /* mask plane (1..3) this actor is clipped against, 0 = none */
 /* Scaling uses the game's decimation table (DS:0x8CC): a source row/column is kept when table[index] < scale, so
  * scale 255 keeps everything and smaller values drop a pseudo-random subset. Offsets are scaled by counting the
  * kept units they span. (My own drawing routine; the EXE's scaled blitter lives in segment 294d.) */
@@ -140,7 +140,7 @@ static void draw_picture(u8 *dst, int cam_x, int view_top, const Actor *a, const
 			if (keep_col && (sy >= 0xFF || kept(128 + row, sy))) {
 				if (color && outx >= 0 && outx < SCREEN_W && outy >= view_top && outy < SCREEN_H) {
 					int rx = outx + cam_x, ry = outy - view_top;
-					if (!(g_clip_mask && rx >= 0 && rx < g_room_w && ry < 144 && g_mask[ry * g_room_w + rx])) { dst[outy * SCREEN_W + outx] = (u8)pixel_color(a, c, color); Actor *wa = (Actor *)a; if (!wa->hvalid) { wa->hx1 = wa->hx2 = rx; wa->hy1 = wa->hy2 = ry; wa->hvalid = 1; } else { if (rx < wa->hx1) wa->hx1 = rx; if (rx > wa->hx2) wa->hx2 = rx; if (ry < wa->hy1) wa->hy1 = ry; if (ry > wa->hy2) wa->hy2 = ry; } }
+					if (!(g_clip_mask && rx >= 0 && rx < g_room_w && ry < 144 && g_masks[g_clip_mask][ry * g_room_w + rx])) { dst[outy * SCREEN_W + outx] = (u8)pixel_color(a, c, color); Actor *wa = (Actor *)a; if (!wa->hvalid) { wa->hx1 = wa->hx2 = rx; wa->hy1 = wa->hy2 = ry; wa->hvalid = 1; } else { if (rx < wa->hx1) wa->hx1 = rx; if (rx > wa->hx2) wa->hx2 = rx; if (ry < wa->hy1) wa->hy1 = ry; if (ry > wa->hy2) wa->hy2 = ry; } }
 				}
 				outy++;
 			}
@@ -154,7 +154,7 @@ static void draw_picture(u8 *dst, int cam_x, int view_top, const Actor *a, const
 	}
 }
 
-extern int g_view_top; extern u8 *g_mask; extern int g_room_w;
+extern int g_view_top; extern u8 *g_masks[4]; extern int g_nplanes; extern int g_room_w;
 void costume_draw_actors(u8 *screen, int cam_x, int view_top)
 {
 	int order[16], n = 0;
@@ -166,7 +166,12 @@ void costume_draw_actors(u8 *screen, int cam_x, int view_top)
 		int mirror = (a->facing & 3) == 0;      /* verified visually: west (0) is the mirrored direction */
 		if (c.format & 0x80) mirror = !mirror;
 		int xm = 0, ym = 0; walk_setup_scale(a); a->hvalid = 0;
-		g_clip_mask = eng_get_class(order[k], 20) ? 0 : (eng_get_class(order[k], 21) || (a->walkbox < g_nboxes && g_boxes[a->walkbox].mask));   /* classes 20 NeverClip, 21 AlwaysClip */
+		{ /* ScummVM Actor::drawActorCostume: zbuf = the walkbox's mask value (forced to >= 1 for AlwaysClip), clamped to the planes present */
+		  int z = (a->walkbox < g_nboxes) ? g_boxes[a->walkbox].mask : 0;
+		  if (!z && eng_get_class(order[k], 21)) z = 1;
+		  if (z > g_nplanes) z = g_nplanes;
+		  if (eng_get_class(order[k], 20) || z < 1 || !g_masks[z]) z = 0;
+		  g_clip_mask = z; }   /* classes 20 NeverClip, 21 AlwaysClip */
 		for (int limb = 0; limb < 16; limb++) {
 			if (a->curpos[limb] == 0xFFFF || (a->stopped & (1 << limb))) continue;   /* 0x79 = limb stopped (hidden) */
 			int code = c.anim_cmds[a->curpos[limb] & 0x7FFF] & 0x7F;

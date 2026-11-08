@@ -6,7 +6,10 @@
 #include <stdlib.h>
 
 int g_room, g_room_w, g_room_h;
-u8 *g_roomimg; u8 *g_bg; u8 *g_mask; static u8 *g_roomplane;   /* g_mask: 1 = foreground pixel that hides actors */
+u8 *g_roomimg; u8 *g_bg; u8 *g_mask;   /* g_mask == g_masks[1] (debug dumps) */
+/* Foreground mask planes 1..3 (ScummVM ZP01..ZP03): 1 = pixel that hides an actor. An actor is clipped against the plane numbered by
+ * its walkbox's mask value (clamped to the planes present) - see Actor::drawActorCostume / getMaskFromBox. */
+u8 *g_masks[4]; int g_nplanes; static u8 *g_roomplanes[4];
 Box g_boxes[MAX_BOXES]; int g_nboxes; const u8 *g_box_matrix, *g_box_matrix_end;
 RoomObject g_objs[MAX_ROOM_OBJECTS]; int g_nobjs;
 s16 g_cam_cur = 160, g_cam_dest = 160, g_cam_follow;
@@ -102,10 +105,10 @@ int eng_obj_pos(int obj, int *x, int *y)       /* FUN_1000_a458: actors, room ob
 int eng_obj_walk_dir(int obj) { RoomObject *o = find_room_obj(obj); return o ? o->actordir : 0; }
 
 /* ---------- drawing the objects into the room image ---------- */
-static void put_mask(int x, int y, u8 bits)
+static void put_mask(int pl, int x, int y, u8 bits)
 {
-	if (y < 0 || y >= g_room_h) return;
-	for (int b = 0; b < 8; b++) if ((bits & (0x80 >> b)) && x + b >= 0 && x + b < g_room_w) g_mask[y * g_room_w + x + b] = 1;
+	if (y < 0 || y >= g_room_h || !g_masks[pl]) return;
+	for (int b = 0; b < 8; b++) if ((bits & (0x80 >> b)) && x + b >= 0 && x + b < g_room_w) g_masks[pl][y * g_room_w + x + b] = 1;
 }
 /* An object with a parent is only visible/clickable while the parent's state equals the stored parent state (bit 7 of OC byte +10). */
 static int parent_chain_ok(const RoomObject *o)
@@ -124,7 +127,7 @@ static void rebuild_bg(void)
 {
 	if (!g_roomimg) return;
 	memcpy(g_bg, g_roomimg, (size_t)g_room_w * g_room_h);
-	if (g_roomplane) memcpy(g_mask, g_roomplane, (size_t)g_room_w * g_room_h); else memset(g_mask, 0, (size_t)g_room_w * g_room_h);
+	for (int pl = 1; pl < 4; pl++) if (g_masks[pl]) { if (g_roomplanes[pl]) memcpy(g_masks[pl], g_roomplanes[pl], (size_t)g_room_w * g_room_h); else memset(g_masks[pl], 0, (size_t)g_room_w * g_room_h); }
 	for (int i = 0; i < g_nobjs; i++) {
 		RoomObject *o = &g_objs[i];
 		int st = eng_get_state(o->id);
@@ -136,15 +139,17 @@ static void rebuild_bg(void)
 		/* OI block: 6 hdr, u16 id, then image (u16 size + strip offsets) */
 		const u8 *img = oi + 8;
 		gfx_draw_strips(g_bg, g_room_w, g_room_h, img, o->x / 8, o->w / 8, o->y, o->h);
-		/* foreground mask stored after the image: u16 size, u16 strip offsets, then per-strip RLE (1 byte = 8 pixels per row) */
+		/* foreground masks follow the image, one per plane: each starts with u16 total size, u16 strip offsets, per-strip RLE (1 byte = 8 pixels per row) */
 		{
 			const u8 *mk = img + (g_vga ? rd32(img) : rd16(img)); int ns = o->w / 8;
-			if (rd16(mk) > 2 * ns + 2) for (int sI = 0; sI < ns; sI++) {
-				const u8 *p = mk + rd16(mk + 2 + 2 * sI); int row = 0;
-				while (row < o->h) {
-					u8 b = *p++;
-					if (b & 0x80) { u8 c = *p++; for (int k = b & 0x7F; k > 0 && row < o->h; k--, row++) put_mask(o->x + sI * 8, o->y + row, c); }
-					else for (int k = b; k > 0 && row < o->h; k--, row++) put_mask(o->x + sI * 8, o->y + row, *p++);
+			for (int pl = 1; pl < 4 && (u32)(mk - oi) + 2 <= rd32(oi) && rd16(mk); pl++, mk += rd16(mk)) {
+				if (rd16(mk) > 2 * ns + 2) for (int sI = 0; sI < ns; sI++) {
+					const u8 *p = mk + rd16(mk + 2 + 2 * sI); int row = 0;
+					while (row < o->h) {
+						u8 b = *p++;
+						if (b & 0x80) { u8 c = *p++; for (int k = b & 0x7F; k > 0 && row < o->h; k--, row++) put_mask(pl, o->x + sI * 8, o->y + row, c); }
+						else for (int k = b; k > 0 && row < o->h; k--, row++) put_mask(pl, o->x + sI * 8, o->y + row, *p++);
+					}
 				}
 			}
 		}
@@ -238,31 +243,35 @@ void eng_load_room_data(int room)
 	g_room_w = rd16(hd + 6); g_room_h = rd16(hd + 8);
 	{ u32 psz; const u8 *pa = res_room_block(room, "PA", 0, &psz); g_vga = pa != NULL;     /* retail: 256-colour room palette */
 	  if (pa) for (int i = 0; i < 256 && 8 + 3 * i + 2 < (int)psz; i++) { g_pal_rgb[i][0] = pa[8 + 3 * i]; g_pal_rgb[i][1] = pa[9 + 3 * i]; g_pal_rgb[i][2] = pa[10 + 3 * i]; } }
-	free(g_roomimg); free(g_bg); free(g_mask); free(g_roomplane); g_roomplane = NULL;
-	g_roomimg = calloc((size_t)g_room_w * g_room_h, 1); g_bg = calloc((size_t)g_room_w * g_room_h, 1); g_mask = calloc((size_t)g_room_w * g_room_h, 1);
+	free(g_roomimg); free(g_bg); for (int pl = 1; pl < 4; pl++) { free(g_masks[pl]); free(g_roomplanes[pl]); g_masks[pl] = g_roomplanes[pl] = NULL; } g_nplanes = 0;
+	g_roomimg = calloc((size_t)g_room_w * g_room_h, 1); g_bg = calloc((size_t)g_room_w * g_room_h, 1);
+	for (int pl = 1; pl < 4; pl++) g_masks[pl] = calloc((size_t)g_room_w * g_room_h, 1);
+	g_mask = g_masks[1];
 	const u8 *bm = res_room_block(room, "BM", 0, &sz);
 	if (bm) gfx_draw_strips(g_roomimg, g_room_w, g_room_h, bm + 6, 0, g_room_w / 8, 0, g_room_h);
 	/* The BM payload is a chain of images, each starting with its own u16 size (FUN_1000_2e02 counts up to 4):
 	 * image 0 = background, image 1 = foreground mask plane (per strip: byte-per-row RLE, MSB = leftmost pixel). */
 	if (bm) {
-		const u8 *img0 = bm + 6; u32 s0 = g_vga ? rd32(img0) : rd16(img0);     /* retail: u32 image size; the mask plane that follows keeps the u16 layout */
-		if (s0 && 6 + s0 + 2 <= sz) {
-			const u8 *pl = img0 + s0; int ns = g_room_w / 8;
-			if (rd16(pl) > 2 * ns + 2) {
-				g_roomplane = calloc((size_t)g_room_w * g_room_h, 1);
+		const u8 *img0 = bm + 6; u32 s0 = g_vga ? rd32(img0) : rd16(img0);     /* retail: u32 image size; the mask planes that follow keep the u16 layout */
+		int ns = g_room_w / 8; u32 off = s0;
+		for (int pl = 1; pl < 4 && s0 && 6 + off + 2 <= sz && rd16(img0 + off); pl++) {     /* chain of mask planes (ZP01..ZP03), each with its own u16 total size */
+			const u8 *pk = img0 + off;
+			if (rd16(pk) > 2 * ns + 2) {
+				g_roomplanes[pl] = calloc((size_t)g_room_w * g_room_h, 1);
 				for (int sI = 0; sI < ns; sI++) {
-					const u8 *p = pl + rd16(pl + 2 + 2 * sI); int row = 0;
+					const u8 *p = pk + rd16(pk + 2 + 2 * sI); int row = 0;
 					while (row < g_room_h) {
 						u8 b = *p++, rep = (b & 0x80) != 0; int cnt = b & 0x7F, lit = 0; u8 c = 0;
 						if (rep) c = *p++;
 						for (; cnt > 0 && row < g_room_h; cnt--, row++) {
 							u8 bits = rep ? c : p[lit++];
-							for (int k = 0; k < 8; k++) if (bits & (0x80 >> k)) g_roomplane[row * g_room_w + sI * 8 + k] = 1;
+							for (int k = 0; k < 8; k++) if (bits & (0x80 >> k)) g_roomplanes[pl][row * g_room_w + sI * 8 + k] = 1;
 						}
 						if (!rep) p += lit;
 					}
 				}
 			}
+			g_nplanes = pl; off += rd16(pk);
 		}
 	}
 	/* boxes */
