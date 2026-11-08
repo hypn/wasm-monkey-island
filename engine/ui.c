@@ -285,12 +285,14 @@ static void verb_text(const VerbSlot *v, u8 *out, int *n)
 }
 /* A verb text can span several lines (FF 01 / FF 08 = new line, ScummVM drawString): every line starts at the verb's x
  * (or is centred on it) and the next one is one font height lower. Returns the bounding box of the whole text. */
+/* cosmetic: verbs placed flush against the left screen edge (dialog choices at x=0) get 2 px of padding so glyphs such as 'I' are not glued to the border */
+#define VERB_LEFT(v) ((v)->x + ((v)->x < 2 ? 2 : 0))
 static s16 verb_lh[NUM_VERBS + 1];      /* height of the last drawn text per verb slot (not part of the save: layout cache only) */
 static void verb_bounds(const VerbSlot *v, const u8 *t, int tn, int *bx, int *bw, int *bh)
 {
 	int minx = 9999, maxx = -9999, lines = 1;
 	for (const u8 *p = t; ; ) {
-		int w = cs_string_w(v->charset, p, (int)(t + tn - p)); int x = v->center ? v->x - w / 2 : v->x;
+		int w = cs_string_w(v->charset, p, (int)(t + tn - p)); int x = v->center ? v->x - w / 2 : VERB_LEFT(v);
 		if (x < minx) minx = x; if (x + w > maxx) maxx = x + w;
 		const u8 *q = p; while (*q && !(q[0] == 0xFF && (q[1] == 1 || q[1] == 8))) q += (q[0] == 0xFF) ? ((q[1] == 12) ? 4 : 2) : 1;
 		if (!*q) break; p = q + 2; lines++;
@@ -315,7 +317,7 @@ static void verb_draw(VerbSlot *v, int hover)
 	v->lx = (s16)bx; v->lw = (s16)bw; verb_lh[v - verbs] = (s16)bh; v->lvalid = 1;
 	int cur = color, y = v->y;
 	for (const u8 *p = t; *p; ) {
-		int w = cs_string_w(v->charset, p, (int)(t + tn - p)); int px = v->center ? v->x - w / 2 : v->x;
+		int w = cs_string_w(v->charset, p, (int)(t + tn - p)); int px = v->center ? v->x - w / 2 : VERB_LEFT(v);
 		for (; *p; p++) {
 			if (*p == 0xFF) {
 				if (p[1] == 1 || p[1] == 8) { p += 2; break; }
