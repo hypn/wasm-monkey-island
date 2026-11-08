@@ -11,7 +11,7 @@ Box g_boxes[MAX_BOXES]; int g_nboxes; const u8 *g_box_matrix, *g_box_matrix_end;
 RoomObject g_objs[MAX_ROOM_OBJECTS]; int g_nobjs;
 s16 g_cam_cur = 160, g_cam_dest = 160, g_cam_follow;
 u16 g_inventory[NUM_INVENTORY];
-u8 g_inv_obj_data[NUM_INVENTORY][64];
+u8 g_inv_obj_data[NUM_INVENTORY][INV_OBJ_MAX];
 u8 g_pseudo_room[128];
 u8 g_room_pal[256];   /* colour remap (roomOps 2); 16 used in EGA, 256 in retail VGA */
 int g_ticks_per_frame = 4;
@@ -181,15 +181,12 @@ void eng_pickup_object(int obj)       /* handler 713c */
 	int slot = -1; for (int i = 1; i < NUM_INVENTORY; i++) if (!g_inventory[i]) { slot = i; break; }
 	if (slot < 0) return;
 	g_inventory[slot] = obj;
-	u32 n = o->oc_size; if (n > 64) n = 64;
+	u32 n = o->oc_size; if (n > INV_OBJ_MAX) { fprintf(stderr, "object %d code too large for inventory (%u)\n", obj, n); n = INV_OBJ_MAX; }
 	memcpy(g_inv_obj_data[slot], o->oc, n);
-	/* the code part may be larger than 64 bytes: keep a private copy of the full block */
-	{ u8 *copy = malloc(o->oc_size); memcpy(copy, o->oc, o->oc_size); extern const u8 *g_inv_full[NUM_INVENTORY]; g_inv_full[slot] = copy; }
 	g_obj_owner[obj] = (u8)((g_vars[VAR_EGO] & 0xF) | 0x10);
 	rebuild_bg(); g_screen_dirty = 1;
 	if (g_vars[VAR_INVENTORY_SCRIPT]) { s16 a[16] = {1}; vm_start_script(g_vars[VAR_INVENTORY_SCRIPT], 0, 0, a); }
 }
-const u8 *g_inv_full[NUM_INVENTORY];
 
 int eng_inv_count(int owner)
 {

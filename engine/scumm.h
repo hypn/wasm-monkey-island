@@ -21,6 +21,7 @@ typedef uint32_t u32; typedef int32_t s32;
 #define MAX_DISKS 4
 #define NUM_OBJECTS 1000
 #define NUM_INVENTORY 80
+#define INV_OBJ_MAX 1024   /* full object code is copied on pickup; retail objects exceed 64 bytes */
 #define NUM_ACTORS 13
 #define NUM_VERBS 100
 #define NUM_STRINGS 100

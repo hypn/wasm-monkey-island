@@ -3,7 +3,7 @@
 #include "state.h"
 #include <stdlib.h>
 
-extern u8 g_inv_obj_data[NUM_INVENTORY][64];
+extern u8 g_inv_obj_data[NUM_INVENTORY][INV_OBJ_MAX];
 extern void eng_load_room_data(int room);
 void vm_state(StateIO *io); void eng_state(StateIO *io); void eng_state_done(void);
 void act_state(StateIO *io); void ui_state(StateIO *io); void ui_state_done(void); void snd_state(StateIO *io);

@@ -77,7 +77,7 @@ extern int g_room, g_room_w, g_room_h;
 extern u8 *g_roomimg;
 extern Box g_boxes[MAX_BOXES]; extern int g_nboxes; extern const u8 *g_box_matrix, *g_box_matrix_end;
 extern s16 g_cam_cur, g_cam_dest; extern s16 g_cam_follow;
-extern u8 g_inv_obj_data[NUM_INVENTORY][64];
+extern u8 g_inv_obj_data[NUM_INVENTORY][INV_OBJ_MAX];
 extern u16 g_inventory[NUM_INVENTORY];
 
 /* vm.c */
