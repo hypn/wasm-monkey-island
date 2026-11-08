@@ -11,7 +11,7 @@ int g_view_top = VIEW_TOP, g_view_h = 144;
 u8 g_ui[SCREEN_W * SCREEN_H];          /* persistent bitmap for the non-room rows (text line, verbs) */
 u8 g_txt[SCREEN_W * SCREEN_H];         /* transient text overlay (0xFF = transparent) */
 u32 g_rgb[SCREEN_W * SCREEN_H];
-extern u8 g_room_pal[256];
+extern u8 g_room_pal[256]; extern u8 g_shadow_pal[256];
 extern int vm_pop_sentence(int *, int *, int *);
 int g_charset_id = 1;
 
@@ -498,7 +498,7 @@ void render_frame(void)
 #endif
 	(void)hover_x; (void)hover_y;
 	for (int i = 0; i < SCREEN_W * SCREEN_H; i++) {
-		const u8 *c = g_vga ? g_pal_rgb[g_room_pal[scr[i]]] : g_ega_palette[g_room_pal[scr[i] & 15] & 15];
+		const u8 *c = g_vga ? g_pal_rgb[g_shadow_pal[g_room_pal[scr[i]]]] : g_ega_palette[g_room_pal[scr[i] & 15] & 15];
 		g_rgb[i] = 0xFF000000u | (c[0] << 16) | (c[1] << 8) | c[2];
 	}
 	menu_draw(g_rgb);

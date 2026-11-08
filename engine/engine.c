@@ -16,6 +16,7 @@ s16 g_cam_cur = 160, g_cam_dest = 160, g_cam_follow;
 u16 g_inventory[NUM_INVENTORY];
 u8 g_inv_obj_data[NUM_INVENTORY][INV_OBJ_MAX];
 u8 g_pseudo_room[128];
+u8 g_shadow_pal[256];   /* roomOps 4 (SO_ROOM_PALETTE, small-header games): index -> palette entry actually shown (ScummVM _shadowPalette, applied at palette upload) */
 u8 g_room_pal[256];   /* colour remap (roomOps 2); 16 used in EGA, 256 in retail VGA */
 int g_ticks_per_frame = 4;
 int g_mouse_x, g_mouse_y, g_mouse_buttons, g_key_pressed;
@@ -108,7 +109,9 @@ int eng_obj_walk_dir(int obj) { RoomObject *o = find_room_obj(obj); return o ? o
 static void put_mask(int pl, int x, int y, u8 bits)
 {
 	if (y < 0 || y >= g_room_h || !g_masks[pl]) return;
-	for (int b = 0; b < 8; b++) if ((bits & (0x80 >> b)) && x + b >= 0 && x + b < g_room_w) g_masks[pl][y * g_room_w + x + b] = 1;
+	/* ScummVM Gdi::decompressMaskImg REPLACES the mask bits of the strip (`*dst = c`): a later object's mask overwrites (and can clear)
+	 * an earlier one's in the overlapping area; only transparent strips with dbAllowMaskOr OR them. */
+	for (int b = 0; b < 8; b++) if (x + b >= 0 && x + b < g_room_w) g_masks[pl][y * g_room_w + x + b] = (bits & (0x80 >> b)) ? 1 : 0;
 }
 /* An object with a parent is only visible/clickable while the parent's state equals the stored parent state (bit 7 of OC byte +10). */
 static int parent_chain_ok(const RoomObject *o)
@@ -128,7 +131,9 @@ static void rebuild_bg(void)
 	if (!g_roomimg) return;
 	memcpy(g_bg, g_roomimg, (size_t)g_room_w * g_room_h);
 	for (int pl = 1; pl < 4; pl++) if (g_masks[pl]) { if (g_roomplanes[pl]) memcpy(g_masks[pl], g_roomplanes[pl], (size_t)g_room_w * g_room_h); else memset(g_masks[pl], 0, (size_t)g_room_w * g_room_h); }
-	for (int i = 0; i < g_nobjs; i++) {
+	/* ScummVM drawRoomObjects: from the LAST object index down to the first, so lower-numbered objects end up on top (the forest's black
+	 * 'path' objects are listed last and must lie UNDER the tile objects drawn over them) */
+	for (int i = g_nobjs - 1; i >= 0; i--) {
 		RoomObject *o = &g_objs[i];
 		int st = eng_get_state(o->id);
 		if (getenv("NOOBJ")) continue;
@@ -144,6 +149,7 @@ static void rebuild_bg(void)
 			const u8 *mk = img + (g_vga ? rd32(img) : rd16(img)); int ns = o->w / 8;
 			for (int pl = 1; pl < 4 && (u32)(mk - oi) + 2 <= rd32(oi) && rd16(mk); pl++, mk += rd16(mk)) {
 				if (rd16(mk) > 2 * ns + 2) for (int sI = 0; sI < ns; sI++) {
+					if (!rd16(mk + 2 + 2 * sI)) { for (int row = 0; row < o->h; row++) put_mask(pl, o->x + sI * 8, o->y + row, 0); continue; }   /* empty strip: clears the plane there */
 					const u8 *p = mk + rd16(mk + 2 + 2 * sI); int row = 0;
 					while (row < o->h) {
 						u8 b = *p++;
@@ -238,6 +244,7 @@ int eng_dist(int a, int b)              /* FUN_1000_678e: Chebyshev distance of 
 /* ---------- room loading ---------- */
 void eng_load_room_data(int room)
 {
+	if (room & 0x80) room = g_pseudo_room[room & 0x7f];          /* resource room behind a pseudo room */
 	u32 sz;
 	const u8 *hd = res_room_block(room, "HD", 0, &sz);
 	g_room_w = rd16(hd + 6); g_room_h = rd16(hd + 8);
@@ -314,7 +321,7 @@ void eng_load_room_data(int room)
 	g_exit_code = g_entry_code = NULL;
 	const u8 *ex = res_room_block(room, "EX", 0, &g_exit_size); if (ex) g_exit_code = ex + 6;
 	const u8 *en = res_room_block(room, "EN", 0, &g_entry_size); if (en) g_entry_code = en + 6;
-	for (int i = 0; i < 256; i++) g_room_pal[i] = (u8)i;
+	for (int i = 0; i < 256; i++) { g_room_pal[i] = (u8)i; g_shadow_pal[i] = (u8)i; }
 	/* objects that already carry a state are composed */
 	rebuild_bg();
 }
@@ -355,7 +362,9 @@ void eng_start_room(int room)           /* FUN_1000_2a6e */
 	for (int a = 0; a < 13; a++) if (pending[a]) { g_actors[a].room = room; g_actors[a].x = px[a]; g_actors[a].y = py[a]; }
 	eng_kill_local_scripts();
 	for (int a = 1; a < 13; a++) if (g_actors[a].visible) { g_actors[a].visible = 0; }
-	if (room & 0x80) room = g_pseudo_room[room & 0x7f];
+	/* Pseudo rooms (ids >= 0x80, set up by pseudoRoom): they are distinct rooms for the scripts (VAR_ROOM, actors' room numbers) but load
+	 * the resource of another room (ScummVM: _currentRoom / VAR_ROOM keep the pseudo number, _roomResource = _resourceMapper[room & 0x7f]).
+	 * The forest's entry script branches on VAR_ROOM == 218, 219, ... to draw different tile layouts from one resource room. */
 	g_room = room; g_vars[VAR_ROOM] = room;
 	g_cam_cur = g_cam_dest = 160; g_cam_follow = 0;
 	if (room) {
@@ -469,7 +478,7 @@ void eng_room_ops(int sub, int a, int b, int c, int d, int e)
 		g_vars[VAR_CAMERA_MIN_X] = a; g_vars[VAR_CAMERA_MAX_X] = b; break; }
 	case 2: if (b >= 0 && b < 256) g_room_pal[b] = (u8)a; g_screen_dirty = 1; break;       /* palette remap */
 	case 3: { extern void ui_set_screen(int, int); ui_set_screen(a, b); break; }
-	case 4: break;
+	case 4: if (a >= 0 && a < 256 && b >= 0 && b < 256) g_shadow_pal[b] = (u8)a; g_screen_dirty = 1; break;       /* shadow palette: colour b is displayed as palette entry a */
 	case 5: case 6: break;                               /* shake */
 	case 7: { int sl = e - 1; if (sl >= 0 && sl < 20) { g_scale_slots[sl].y1 = b; g_scale_slots[sl].s1 = a; g_scale_slots[sl].y2 = d; g_scale_slots[sl].s2 = c; } break; }
 	default: break;
@@ -518,7 +527,7 @@ void eng_init(void)
 	for (int i = 0; i < 16; i++) act_init(i);
 	g_vars[VAR_TIMER_NEXT] = 4; g_vars[VAR_CHARINC] = 4; g_vars[VAR_CURRENT_LIGHTS] = 11; g_vars[VAR_NUM_ACTOR] = 13;
 	g_vars[VAR_ACTOR_RANGE_MIN] = 1; g_vars[VAR_ACTOR_RANGE_MAX] = 12; g_vars[VAR_VIDEOMODE] = 13; g_vars[VAR_SOUNDCARD] = 3;   /* EXE sound mode 3 = AdLib (DS:0x1be6) */
-	for (int i = 0; i < 256; i++) g_room_pal[i] = (u8)i;
+	for (int i = 0; i < 256; i++) { g_room_pal[i] = (u8)i; g_shadow_pal[i] = (u8)i; }
 	g_mouse_x = 104; g_mouse_y = 56;
 	vm_boot();
 }
@@ -527,12 +536,13 @@ void eng_init(void)
 void eng_state(StateIO *io)
 {
 	SIO(io, g_cam_cur); SIO(io, g_cam_dest); SIO(io, g_cam_follow);
+	{ u8 pr = (g_room & 0x80) ? (u8)g_room : 0; if (io->ver >= 3) SIO(io, pr); if (!io->saving && pr) g_room = pr; }   /* v3: current room is a pseudo room (id >= 0x80) */
 	SIO(io, g_inventory);
 	if (!io->saving && io->ver < 2) {                      /* v1: 80 x 64-byte inventory object code (migrated in state.c) */
 		u8 old[NUM_INVENTORY][64]; SIO(io, old); memset(g_inv_obj_data, 0, sizeof g_inv_obj_data);
 		for (int i = 0; i < NUM_INVENTORY; i++) memcpy(g_inv_obj_data[i], old[i], 64);
 	} else SIO(io, g_inv_obj_data);
-	 SIO(io, g_pseudo_room); SIO(io, g_room_pal); SIO(io, g_effect);
+	 SIO(io, g_pseudo_room); SIO(io, g_room_pal); if (io->ver >= 4) SIO(io, g_shadow_pal); else if (!io->saving) for (int i = 0; i < 256; i++) g_shadow_pal[i] = (u8)i; SIO(io, g_effect);
 	SIO(io, g_obj_owner); SIO(io, g_obj_class); SIO(io, g_obj_names_over); SIO(io, g_obj_has_name_over);
 	SIO(io, g_nboxes); SIO(io, g_boxes); sio_ptr(io, &g_box_matrix); sio_ptr(io, &g_box_matrix_end);
 	SIO(io, g_nobjs);

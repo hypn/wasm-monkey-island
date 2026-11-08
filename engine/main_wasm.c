@@ -123,7 +123,7 @@ EMSCRIPTEN_KEEPALIVE const char *mi_debug_json(void)
 	dbg_len = 0; if (dbg_buf) dbg_buf[0] = 0;
 	extern int eng_get_state(int); extern int ui_input_enabled(void);
 	int ego = g_vars[VAR_EGO];
-	dj("{\"room\":%d,\"room_name\":", g_room); djs(g_room < 256 ? g_room_names[g_room] : ""); 
+	dj("{\"room\":%d,\"room_name\":", g_room); { extern u8 g_pseudo_room[128]; int rr = (g_room & 0x80) ? g_pseudo_room[g_room & 0x7f] : g_room; djs(rr < 256 ? g_room_names[rr] : ""); dj(",\"pseudo\":%d", (g_room & 0x80) != 0); } 
 	dj(",\"ticks\":%d,\"ego\":%d,\"input_enabled\":%d,\"cutscene_slot\":%d,\"have_msg\":%d,\"talk_actor\":%d",
 	   g_vars[VAR_TIMER_TOTAL], ego, ui_input_enabled(), g_cutscene_slot, g_vars[VAR_HAVE_MSG], g_vars[VAR_TALK_ACTOR]);
 	dj(",\"camera\":{\"cur\":%d,\"dest\":%d,\"follow\":%d},\"mouse\":{\"screen\":[%d,%d],\"virt\":[%d,%d]},\"room_size\":[%d,%d]",

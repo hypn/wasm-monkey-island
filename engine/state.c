@@ -97,7 +97,7 @@ static u8 *unpack(const u8 *in, u32 n, u32 *outn)
 
 int state_save(u8 **out, u32 *len)
 {
-	StateIO io = { 0 }; io.saving = 1; u32 sig = game_sig(); s32 room = g_room;
+	StateIO io = { 0 }; io.saving = 1; extern u8 g_pseudo_room[128]; u32 sig = game_sig(); s32 room = (g_room & 0x80) ? g_pseudo_room[g_room & 0x7f] : g_room;   /* header: the RESOURCE room (loaded first); the pseudo id travels in eng_state (v3) */
 	header(&io, &sig, &room); body(&io);
 	if (io.err) { free(io.buf); return -1; }
 	*out = pack(io.buf, io.pos, len); free(io.buf); return 0;

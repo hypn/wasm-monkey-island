@@ -6,7 +6,7 @@
  * (disk, offset) references so a save is independent of where the data was loaded. */
 /* Save format versioning: see RE_NOTES.md "Save-game versioning".  io->ver is the version of the data being read
  * (== STATE_VERSION when saving); a module whose layout changed branches on it and migrates old data. */
-#define STATE_VERSION 2
+#define STATE_VERSION 4
 typedef struct { u8 *buf; u32 pos, cap; int saving, err, ver; } StateIO;
 void sio_bytes(StateIO *io, void *p, u32 n);
 #define SIO(io, x) sio_bytes((io), &(x), (u32)sizeof(x))

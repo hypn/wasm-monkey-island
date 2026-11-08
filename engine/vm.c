@@ -160,7 +160,7 @@ int vm_start_script(int id, int freeze_res, int recursive, const s16 *args)   /*
 	} else {
 		/* local script: LS block in current room, id byte after header */
 		for (int n = 0;; n++) {
-			const u8 *b = res_room_block(g_room, "LS", n, &sz);
+			extern u8 g_pseudo_room[128]; const u8 *b = res_room_block((g_room & 0x80) ? g_pseudo_room[g_room & 0x7f] : g_room, "LS", n, &sz);
 			if (!b) { vm_error("local script not found", id); return 0; }
 			if (b[6] == id) { base = b + 7; break; }
 		}
