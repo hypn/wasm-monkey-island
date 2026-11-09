@@ -9,6 +9,11 @@ extern u32 g_rgb[]; extern void eng_frame(void); extern void eng_init(void);
 static u8 rgba[SCREEN_W * SCREEN_H * 4];
 
 EMSCRIPTEN_KEEPALIVE u8 *mi_alloc(u32 n) { return malloc(n); }
+extern int g_dbg_script, g_dbg_op; extern u32 g_dbg_pc;
+EMSCRIPTEN_KEEPALIVE int mi_last_script(void) { return g_dbg_script; }
+EMSCRIPTEN_KEEPALIVE int mi_last_pc(void) { return (int)g_dbg_pc; }
+EMSCRIPTEN_KEEPALIVE int mi_last_op(void) { return g_dbg_op; }
+EMSCRIPTEN_KEEPALIVE void mi_free(u8 *p) { free(p); }      /* the engine copies disks and charsets: the page frees its upload buffers */
 
 EMSCRIPTEN_KEEPALIVE int mi_init(u8 *lec, u32 lec_n, u8 *idx, u32 idx_n)
 {
@@ -145,6 +150,8 @@ EMSCRIPTEN_KEEPALIVE const char *mi_debug_json(void)
 	for (int i = 0, first = 1; i < NUM_VARS; i++) if (g_vars[i]) { dj("%s\"%d\":%d", first ? "" : ",", i, g_vars[i]); first = 0; }
 	dj("},\"bits_set\":[");
 	for (int i = 0, first = 1; i < NUM_BITVARS; i++) if (g_bitvars[i >> 3] & (1 << (i & 7))) { dj("%s%d", first ? "" : ",", i); first = 0; }
+	dj("],\"last_op\":{\"script\":%d,\"pc\":%u,\"op\":%d},\"menu_open\":%d,\"disks\":[", g_dbg_script, g_dbg_pc, g_dbg_op, menu_is_open());
+	for (int i = 0; i < g_num_disks; i++) dj("%s%u", i ? "," : "", g_disk_sizes[i]);
 	dj("]}");
 	return dbg_buf;
 }

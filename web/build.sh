@@ -6,7 +6,7 @@ cd "$(dirname "$0")"
 ENG=../engine
 DEMO=../mi_demo
 mkdir -p dist build
-emcc -O2 -DJS_CURSOR -sSINGLE_FILE=1 -sMODULARIZE=1 -sEXPORT_NAME=MI -sALLOW_MEMORY_GROWTH=1 \
+emcc -O2 -DJS_CURSOR -sSINGLE_FILE=1 -sMODULARIZE=1 -sEXPORT_NAME=MI -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=64MB -sMAXIMUM_MEMORY=1GB -sSTACK_SIZE=1MB --profiling-funcs \
   -sENVIRONMENT=web -sEXPORTED_RUNTIME_METHODS=HEAPU8,HEAPF32 -sNO_EXIT_RUNTIME=1 \
   $ENG/main_wasm.c $ENG/vm.c $ENG/engine.c $ENG/actor.c $ENG/walk.c $ENG/costume.c $ENG/gfx.c $ENG/res.c $ENG/ui.c $ENG/sound.c $ENG/opl.c $ENG/state.c $ENG/menu.c \
   -o build/mi.js

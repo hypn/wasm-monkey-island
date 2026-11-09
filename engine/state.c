@@ -76,7 +76,7 @@ static void body(StateIO *io)
 /* zero-run packing: 0x00 n = n zero bytes (state is mostly zeros: 64 KB of object-name overrides alone) */
 static u8 *pack(const u8 *in, u32 n, u32 *outn)
 {
-	u8 *o = malloc(n + n / 128 + 16); u32 j = 0;
+	u8 *o = malloc(2 * (size_t)n + 16); u32 j = 0;      /* worst case: every zero byte is isolated and costs 2 bytes */
 	for (u32 i = 0; i < n;) {
 		if (in[i]) { o[j++] = in[i++]; continue; }
 		u32 r = 0; while (i < n && !in[i] && r < 255) { i++; r++; }

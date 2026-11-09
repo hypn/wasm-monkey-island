@@ -11,6 +11,7 @@ u8 g_bitvars[NUM_BITVARS / 8];
 Slot g_slots[NUM_SLOTS];
 int g_cur_slot = 0xff;
 int g_trace = 0;
+int g_dbg_script = -1, g_dbg_op = -1; u32 g_dbg_pc;     /* last operation started (reported if the engine traps) */
 int g_halted = 0;
 
 /* interpreter registers (DS:6f42 pc, DS:72a5 opcode, DS:6f4c result position) */
@@ -829,6 +830,7 @@ static void run_slot_until_break(int slot)
 		if (g_halted) break;
 		u32 at = pc;
 		opcode = fetch8();
+		g_dbg_script = g_cur_slot < NUM_SLOTS ? g_slots[g_cur_slot].number : -1; g_dbg_pc = at; g_dbg_op = opcode;
 		if (g_trace) fprintf(stderr, "[%d/%d@%u] %02x %s\n", g_cur_slot < NUM_SLOTS ? g_slots[g_cur_slot].number : -1, g_cur_slot, at, opcode, opname[opcode] ? opname[opcode] : "?");
 		exec_opcode();
 	}

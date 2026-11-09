@@ -67,7 +67,8 @@
   const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
   try {
     const mod = await MI();
-    const put = (bytes) => { const p = mod._mi_alloc(bytes.length); mod.HEAPU8.set(bytes, p); return p; };
+    const put = (bytes) => { const p = mod._mi_alloc(bytes.length); if (!p) throw new Error('out of memory loading game data (' + bytes.length + ' bytes)'); mod.HEAPU8.set(bytes, p); return p; };
+    const putTmp = (bytes, fn) => { const p = put(bytes); try { return fn(p); } finally { mod._mi_free(p); } };   // engine keeps its own copy
     // data source: the embedded shareware demo by default; ?retail=true fetches the retail game files from the folder "retail/"
     // (needs http(s): browsers block fetch() from file://)
     const q = new URLSearchParams(location.search);
@@ -88,9 +89,9 @@
       for (let n = 1; n <= 4; n++) { const d = await get('DISK0' + n + '.LEC', n > 1); if (d) disks[n - 1] = d; else break; }
       for (const id of [1, 2, 3, 4]) { const c = await get('90' + id + '.LFL', true); if (c) charsets[id] = c; }
     }
-    disks.forEach((d, n) => { const r = mod._mi_add_disk(n, put(d), d.length); if (r) throw new Error('disk ' + (n + 1) + ' rejected (' + r + ')'); });
+    disks.forEach((d, n) => { const r = putTmp(d, p => mod._mi_add_disk(n, p, d.length)); if (r) throw new Error('disk ' + (n + 1) + ' rejected (' + r + ')'); });
     if (mod._mi_set_index(put(index), index.length)) throw new Error('index rejected');
-    for (const [id, d] of Object.entries(charsets)) mod._mi_charset(+id, put(d), d.length);
+    for (const [id, d] of Object.entries(charsets)) putTmp(d, p => mod._mi_charset(+id, p, d.length));
     mod._mi_start();
     // retail: skip the copy-protection wheel (needs the code sheet) and let the boot script carry on into the intro.
     if (base !== null) { for (let i = 0; i < 30; i++) mod._mi_frame(); mod._mi_start_at(0); }
@@ -101,13 +102,13 @@
               Math.max(0, Math.min(199, Math.floor((e.clientY - r.top) * 200 / r.height)))];
     };
     canvas.addEventListener('mousemove', e => { const [x, y] = toGame(e); mod._mi_mouse_move(x, y); });
-    canvas.addEventListener('mousedown', e => { const [x, y] = toGame(e); mod._mi_mouse_click(x, y, e.button === 2 ? 2 : 1); canvas.focus(); e.preventDefault(); });
+    canvas.addEventListener('mousedown', e => { const [x, y] = toGame(e); logIn('click', x, y, e.button === 2 ? 2 : 1); mod._mi_mouse_click(x, y, e.button === 2 ? 2 : 1); canvas.focus(); e.preventDefault(); });
     canvas.addEventListener('contextmenu', e => e.preventDefault());
     const keymap = { Escape: 27, Enter: 13, Backspace: 8, Tab: 9, ' ': 32, F1: 315, F2: 316, F3: 317, F4: 318, F5: 319, F6: 320, F7: 321, F8: 322, F9: 323, F10: 324 };
     window.addEventListener('keydown', e => {
       if (document.getElementById('dbg').open) return;   // debug dialog: keys go to the dialog, not the game
       let k = keymap[e.key]; if (k === undefined && e.key.length === 1) k = e.key.charCodeAt(0);
-      if (k !== undefined) { mod._mi_key(k); e.preventDefault(); }
+      if (k !== undefined) { logIn('key', k); mod._mi_key(k); e.preventDefault(); }
     });
     // audio: the engine synthesises AdLib (OPL2) into a ring buffer; this callback just drains it
     let actx = null, audioReady = false;
@@ -137,7 +138,7 @@
     // touch devices have no Esc key: show a button for it (skips cutscenes, cancels a chosen verb)
     window.__isMobile = isMobile;
     const escBtn = document.getElementById('escbtn'); escBtn.hidden = !isMobile;
-    escBtn.addEventListener('click', () => { mod._mi_key(27); startAudio(); escBtn.blur(); });
+    escBtn.addEventListener('click', () => { logIn('key', 27); mod._mi_key(27); startAudio(); escBtn.blur(); });
     const menuBtn = document.getElementById('menubtn');
     // ---- [debug] dialog: snapshot of engine state as JSON (+ the packed save so a situation can be reproduced) ----
     const dbg = document.getElementById('dbg'); let dbgData = null;
@@ -147,6 +148,8 @@
       const d = JSON.parse(new TextDecoder().decode(h.subarray(p, e)));
       const sp = mod._mi_debug_save(), sn = mod._mi_debug_save_len();
       d.save_b64 = sp ? dbgB64(sp, sn) : null;
+      let slots = {}; try { for (let i = 0; i < 10; i++) { const m = localStorage.getItem('mi.' + (window.__saveNs || 'demo') + '.slot' + i + '.meta'); if (m !== null) slots[i] = m; } } catch (_) {}
+      d.input_log = inputLog.slice(); d.last_error = lastError; d.save_slots = slots; d.heap_bytes = mod.HEAPU8.length;
       d.client = { build: '__BUILD__', url: location.href, ua: navigator.userAgent, viewport: [innerWidth, innerHeight], dpr: devicePixelRatio, frames: window.__frames, time: new Date().toISOString() };
       return d;
     }
@@ -171,16 +174,26 @@
     dbg.addEventListener('click', e => { if (e.target === dbg) { dbg.close(); canvas.focus(); } });
     document.getElementById('dbgcopy').addEventListener('click', async e => { const t = JSON.stringify(dbgData); try { await navigator.clipboard.writeText(t); e.target.textContent = 'Copied'; } catch (_) { const r = document.createRange(); r.selectNodeContents(document.getElementById('dbgjson')); getSelection().removeAllRanges(); getSelection().addRange(r); e.target.textContent = 'Select+Ctrl-C'; } setTimeout(() => e.target.textContent = 'Copy JSON', 1500); });
     document.getElementById('dbgdl').addEventListener('click', () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(dbgData, null, 1)], { type: 'application/json' })); a.download = 'monkey-debug-room' + dbgData.room + '.json'; a.click(); });
-    menuBtn.addEventListener('click', () => { if (!menuBtn.disabled) { mod._mi_key(319); } menuBtn.blur(); canvas.focus(); });
+    menuBtn.addEventListener('click', () => { if (!menuBtn.disabled) { logIn('key', 319); mod._mi_key(319); } menuBtn.blur(); canvas.focus(); });
     window.__mi = mod; window.__frames = 0;
+    // debug aids: the last inputs (with frame numbers) and the last engine error, included in the [debug] dump
+    const inputLog = [], logIn = (...a) => { inputLog.push([window.__frames, ...a]); if (inputLog.length > 40) inputLog.shift(); };
+    let lastError = null; window.addEventListener('error', e => { lastError = { message: String(e.message), stack: e.error && e.error.stack ? String(e.error.stack).slice(0, 1500) : null, frame: window.__frames }; });
     let last = performance.now(), acc = 0; window.__speed = 1;   // test hook (set from the console / test driver), not a URL option
     function tick(now, bg) {
       acc += (now - last) * (window.__speed || 1); last = now;
       const interval = mod._mi_frame_ms();
       let n = 0;
-      while (acc >= interval && n < 60) {
-        if (mod._mi_frame()) { status.textContent = 'The game has ended.'; return; }
-        acc -= interval; n++; window.__frames++;
+      try {
+        while (acc >= interval && n < 60) {
+          if (mod._mi_frame()) { status.textContent = 'The game has ended.'; return; }
+          acc -= interval; n++; window.__frames++;
+        }
+      } catch (err) {   // wasm trap / abort (e.g. out of memory): stop and say so instead of freezing silently; [debug] still works if the module survived
+        console.error('engine error at frame ' + window.__frames, err); lastError = { message: String(err && err.message || err), stack: err && err.stack ? String(err.stack).slice(0, 1500) : null, frame: window.__frames };
+        let where = ''; try { where = ' in script ' + mod._mi_last_script() + ' at pc ' + mod._mi_last_pc() + ' op 0x' + mod._mi_last_op().toString(16); } catch (_) {}
+        status.textContent = 'Game stopped: ' + (err && err.message || err) + where + ' (frame ' + window.__frames + ') - open [debug] and send the JSON';
+        return;
       }
       if (acc > interval * 60) acc = 0;
       if (location.hash === '#debug') status.textContent = 'frames=' + window.__frames + ' room=' + mod._mi_room();
