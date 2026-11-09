@@ -74,7 +74,7 @@ static void do_load(void)
 	if (!slots[sel].used) { say("That slot is empty"); return; }
 	u32 cap = 1 << 20; u8 *buf = malloc(cap); int n = plat_save_get(sel, buf, cap);
 	int r = n > 0 ? state_load(buf, (u32)n) : -1; free(buf);
-	if (r) { say("Could not load that save"); return; }
+	if (r) { say(r == -3 ? "That save is damaged" : r == -2 ? "Could not load that save (unchanged)" : "Could not load that save"); return; }
 	close_menu();
 }
 

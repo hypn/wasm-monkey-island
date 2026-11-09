@@ -140,6 +140,7 @@ static void rebuild_bg(void)
 		if (st <= 0 || !o->n_oi || !parent_chain_ok(o)) continue;
 		int idx = st - 1; if (idx >= o->n_oi) idx = o->n_oi - 1;
 		const u8 *oi = o->oi[idx]; if (!oi) continue;
+		if (rd32(oi) <= 8) continue;      /* placeholder OI block (header only, e.g. the note after pickup has no picture for its new state): nothing to draw; reading on would run into the next block's header */
 		if (!o->w || !o->h) continue;
 		/* OI block: 6 hdr, u16 id, then image (u16 size + strip offsets) */
 		const u8 *img = oi + 8;
@@ -188,10 +189,12 @@ void eng_draw_object(int obj, int x, int y)    /* handler 7014 */
 void eng_remove_inventory(int obj) { int s = inv_slot_of(obj); if (s >= 0) g_inventory[s] = 0; }
 void eng_pickup_object(int obj)       /* handler 713c */
 {
-	if (eng_obj_where(obj) != WIO_ROOM) return;
+	if (eng_obj_where(obj) == WIO_NOTFOUND && find_room_obj(obj) && inv_slot_of(obj) < 0 && (g_obj_owner[obj] & 0xF) == (g_vars[VAR_EGO] & 0xF))
+		g_obj_owner[obj] = (u8)((g_obj_owner[obj] & 0xF0) | 0xF);     /* orphaned: the ego "owns" it but no inventory slot holds it (stale owner left by a lost/removed entry); it is still in the room, so allow the pickup */
+	if (eng_obj_where(obj) != WIO_ROOM) { fprintf(stderr, "pickup(%d) refused: where=%d owner/state byte=0x%02x in-room-list=%d room=%d\n", obj, eng_obj_where(obj), g_obj_owner[obj < NUM_OBJECTS ? obj : 0], find_room_obj(obj) != NULL, g_room); return; }
 	RoomObject *o = find_room_obj(obj);
 	int slot = -1; for (int i = 1; i < NUM_INVENTORY; i++) if (!g_inventory[i]) { slot = i; break; }
-	if (slot < 0) return;
+	if (slot < 0) { fprintf(stderr, "pickup(%d) refused: no free inventory slot\n", obj); return; }
 	g_inventory[slot] = obj;
 	u32 n = o->oc_size; if (n > INV_OBJ_MAX) { fprintf(stderr, "object %d code too large for inventory (%u)\n", obj, n); n = INV_OBJ_MAX; }
 	memcpy(g_inv_obj_data[slot], o->oc, n);
@@ -248,6 +251,7 @@ void eng_load_room_data(int room)
 	if (room & 0x80) room = g_pseudo_room[room & 0x7f];          /* resource room behind a pseudo room */
 	u32 sz;
 	const u8 *hd = res_room_block(room, "HD", 0, &sz);
+	if (!hd) { fprintf(stderr, "room %d has no header block\n", room); return; }      /* absent room (bad save / script): keep the current room instead of reading through a NULL header */
 	g_room_w = rd16(hd + 6); g_room_h = rd16(hd + 8);
 	{ u32 psz; const u8 *pa = res_room_block(room, "PA", 0, &psz); g_vga = pa != NULL;     /* retail: 256-colour room palette */
 	  if (pa) for (int i = 0; i < 256 && 8 + 3 * i + 2 < (int)psz; i++) { g_pal_rgb[i][0] = pa[8 + 3 * i]; g_pal_rgb[i][1] = pa[9 + 3 * i]; g_pal_rgb[i][2] = pa[10 + 3 * i]; } }
@@ -427,7 +431,7 @@ void eng_follow_actor(int a)
 }
 static void camera_update(void)
 {
-	if (g_cam_follow) {
+	if (g_cam_follow > 0 && g_cam_follow < 16) {      /* an actor index; scripts take it from variables */
 		Actor *a = &g_actors[g_cam_follow];
 		if (a->room == g_room && cam_outside_window(a->x)) g_cam_dest = (s16)clamp_cam(a->x);
 	}
@@ -500,10 +504,20 @@ int eng_sentence_idle(void);
 /* ---------- main per-frame step ---------- */
 extern int vm_pop_sentence(int *verb, int *a, int *b);
 extern int ui_tick(void);
+// int g_temp_safe_rearm;   // debug hack (disabled), see eng_frame
 void eng_frame(void)
 {
 	int ticks = g_vars[VAR_TIMER_NEXT] > 0 ? g_vars[VAR_TIMER_NEXT] : 4;
 	if (menu_is_open()) { snd_run(ticks); menu_tick(); render_frame(); return; }      /* the game is paused behind the menu; music goes on */
+	// DEBUG HACK (disabled): force the safe in room 30 to a short, known code (pull 1, push 2, pull 1, push 1 instead of the real
+	// 1,3,2,2) and reset its dial progress (vars 225..227) on room entry / after a load. To re-enable, un-comment this block, the
+	// g_temp_safe_rearm definition above, and the matching line at the end of state_load_raw (state.c). The dial is a state machine
+	// in vars 220..223 (code: run length per stage, direction alternates starting with pull) and 225..227 (stage, count, direction);
+	// the storekeeper (actor 11) must be out of room 30 for the handle to work.
+	// { static int armed; if (g_room != 30) armed = 0; else {
+	//	if (g_temp_safe_rearm) { armed = 0; g_temp_safe_rearm = 0; }
+	//	if (!armed) { g_vars[225] = g_vars[226] = g_vars[227] = 0; armed = 1; }    // reset the dial on room entry / after a load
+	//	g_vars[220] = 1; g_vars[221] = 2; g_vars[222] = 1; g_vars[223] = 1; } }
 	g_vars[VAR_TIMER] = ticks; g_vars[VAR_TIMER_TOTAL] += ticks;
 	g_vars[VAR_TMR_1] += ticks; g_vars[VAR_TMR_2] += ticks; g_vars[VAR_TMR_3] += ticks;
 	vm_tick_delays(ticks);
@@ -555,4 +569,10 @@ void eng_state(StateIO *io)
 	}
 	SIO(io, g_scale_slots);
 }
-void eng_state_done(void) { walk_load_matrix(); rebuild_bg(); g_screen_dirty = 1; }
+void eng_state_done(void)
+{
+	if (g_nobjs < 0 || g_nobjs > MAX_ROOM_OBJECTS) g_nobjs = 0;      /* counts come straight from the save: never index past the arrays */
+	if (g_nboxes < 0 || g_nboxes > MAX_BOXES) g_nboxes = 0;
+	if (g_cam_follow < 0 || g_cam_follow >= 16) g_cam_follow = 0;      /* an actor index */
+	walk_load_matrix(); rebuild_bg(); g_screen_dirty = 1;
+}

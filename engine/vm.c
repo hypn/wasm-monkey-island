@@ -946,5 +946,9 @@ void vm_state(StateIO *io)
 	}
 	SIO(io, g_cutscene_slot); SIO(io, cutscene_depth); SIO(io, cutscene_stack); SIO(io, override_pc); SIO(io, override_slot);
 	SIO(io, sentences); SIO(io, nsent);
-	if (!io->saving) { g_cur_slot = 0xff; code_base = NULL; override_base = NULL; }
+	if (!io->saving) {
+		g_cur_slot = 0xff; code_base = NULL; override_base = NULL;
+		if (nsent < -1 || nsent >= 6) nsent = -1;                                   /* values straight from the save: keep them inside their arrays */
+		for (int i = 0; i < NUM_SLOTS; i++) if (g_slots[i].status != SS_DEAD && !g_slots[i].base) { g_slots[i].status = SS_DEAD; g_slots[i].number = 0; }   /* a running script with no code */
+	}
 }

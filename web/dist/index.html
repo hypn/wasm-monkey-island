@@ -208,10 +208,12 @@ else if (typeof define === 'function' && define['amd'])
           if (mod._mi_frame()) { status.textContent = 'The game has ended.'; return; }
           acc -= interval; n++; window.__frames++;
         }
-      } catch (err) {   // wasm trap / abort (e.g. out of memory): stop and say so instead of freezing silently; [debug] still works if the module survived
-        console.error('engine error at frame ' + window.__frames, err); lastError = { message: String(err && err.message || err), stack: err && err.stack ? String(err.stack).slice(0, 1500) : null, frame: window.__frames };
-        let where = ''; try { where = ' in script ' + mod._mi_last_script() + ' at pc ' + mod._mi_last_pc() + ' op 0x' + mod._mi_last_op().toString(16); } catch (_) {}
-        status.textContent = 'Game stopped: ' + (err && err.message || err) + where + ' (frame ' + window.__frames + ') - open [debug] and send the JSON';
+      } catch (err) {   // wasm trap / abort: stop and say where (script/pc/opcode last started + the error stack with wasm function names); [debug] still works if the module survived
+        let where = ''; try { where = 'script ' + mod._mi_last_script() + ' pc ' + mod._mi_last_pc() + ' op 0x' + mod._mi_last_op().toString(16); } catch (_) {}
+        const st = String(err && err.stack || err);
+        console.error('ENGINE TRAP at frame ' + window.__frames + ' (' + where + ')\n' + st);
+        lastError = { message: String(err && err.message || err), stack: st.slice(0, 1500), where, frame: window.__frames };
+        status.textContent = 'Game stopped: ' + (err && err.message || err) + ' [' + where + '] frame ' + window.__frames + ' -- see console for the stack; open [debug] and send the JSON';
         return;
       }
       if (acc > interval * 60) acc = 0;

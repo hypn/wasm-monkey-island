@@ -18,6 +18,7 @@ int g_charset_id = 1;
 /* ---------- charset ---------- */
 static const u8 *cs_glyph(int cs, int ch, int *w, int *h, int *xo, int *yo)
 {
+	if (cs < 0 || cs >= 10) return NULL;      /* charset id can come from a save */
 	const u8 *d = g_charset[cs]; if (!d) return NULL;
 	const u8 *base = d + 21;
 	u32 off = rd32(base + 4 + 4 * ch);
@@ -26,7 +27,7 @@ static const u8 *cs_glyph(int cs, int ch, int *w, int *h, int *xo, int *yo)
 	*w = g[0]; *h = g[1]; *xo = (s8)g[2]; *yo = (s8)g[3];
 	return g + 4;
 }
-static int cs_height(int cs) { return g_charset[cs] ? g_charset[cs][22] : 8; }
+static int cs_height(int cs) { return (cs >= 0 && cs < 10 && g_charset[cs]) ? g_charset[cs][22] : 8; }
 static int cs_char_w(int cs, int ch) { int w, h, xo, yo; if (!cs_glyph(cs, ch, &w, &h, &xo, &yo)) return 0; return w + xo; }
 static int cs_string_w(int cs, const u8 *s, int len)
 {

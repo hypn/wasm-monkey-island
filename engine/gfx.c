@@ -70,7 +70,9 @@ void gfx_decode_strip_vga(u8 *dst, int pitch, const u8 *src, int h)
 }
 void gfx_draw_strips(u8 *dst, int pitch, int dst_h, const u8 *img, int xstrip, int nstrips, int y, int h)
 {
+	if (h > 200) h = 200;
 	for (int i = 0; i < nstrips; i++) {
+		if (xstrip + i < 0 || (xstrip + i + 1) * 8 > pitch) continue;      /* column outside the destination image */
 		u8 tmp[8 * 200];
 		if (g_vga) gfx_decode_strip_vga(tmp, 8, img + rd32(img + 4 + 4 * i), h);
 		else gfx_decode_strip(tmp, 8, img + rd16(img + 2 + 2 * i), h);
